@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 type Message = {
@@ -6,11 +6,55 @@ type Message = {
   content: string;
 };
 
+const PRESET_LANGUAGES = ["Chinese", "Korean", "Japanese", "Spanish", "French", "German"];
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [language, setLanguage] = useState<string | null>(null);
+  const [existingLanguages, setExistingLanguages] = useState<string[]>([]);
+  const [isBootstrapping, setIsBootstrapping] = useState(false);
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [customLanguage, setCustomLanguage] = useState("");
+
+  useEffect(() => {
+    loadExistingLanguages();
+  }, []);
+
+  async function loadExistingLanguages() {
+    try {
+      const languages = await invoke<string[]>("list_languages");
+      setExistingLanguages(languages);
+    } catch (error) {
+      console.error("Failed to load languages:", error);
+    }
+  }
+
+  async function selectLanguage(lang: string) {
+    if (!lang.trim()) return;
+
+    const langLower = lang.toLowerCase();
+    const exists = existingLanguages.map(l => l.toLowerCase()).includes(langLower);
+
+    if (!exists) {
+      setIsBootstrapping(true);
+      try {
+        await invoke("bootstrap_language", { language: lang });
+        await loadExistingLanguages();
+      } catch (error) {
+        alert(`Failed to set up ${lang}: ${error}`);
+        setIsBootstrapping(false);
+        return;
+      }
+      setIsBootstrapping(false);
+    }
+
+    setLanguage(langLower);
+    setMessages([]);
+    setShowCustomInput(false);
+    setCustomLanguage("");
+  }
 
   async function sendMessage() {
     if (!input.trim() || isLoading) return;
@@ -37,23 +81,68 @@ function App() {
   }
 
   if (!language) {
+    // Combine preset languages with any existing custom ones
+    const customExisting = existingLanguages.filter(
+      lang => !PRESET_LANGUAGES.map(p => p.toLowerCase()).includes(lang.toLowerCase())
+    );
+
     return (
       <div className="container">
         <h1>Your Second First Language</h1>
         <p>Choose a language to learn:</p>
+        {isBootstrapping && <p className="hint">Setting up language...</p>}
         <div className="language-grid">
-          {["Chinese", "Korean", "Japanese", "Spanish", "French", "German"].map(
-            (lang) => (
+          {PRESET_LANGUAGES.map((lang) => {
+            const isExisting = existingLanguages.map(l => l.toLowerCase()).includes(lang.toLowerCase());
+            return (
               <button
                 key={lang}
-                className="language-btn"
-                onClick={() => setLanguage(lang.toLowerCase())}
+                className={`language-btn ${isExisting ? "existing" : ""}`}
+                onClick={() => selectLanguage(lang)}
+                disabled={isBootstrapping}
               >
                 {lang}
+                {isExisting && <span className="badge">Started</span>}
               </button>
-            )
-          )}
+            );
+          })}
+          {customExisting.map((lang) => (
+            <button
+              key={lang}
+              className="language-btn existing"
+              onClick={() => selectLanguage(lang)}
+              disabled={isBootstrapping}
+            >
+              {lang}
+              <span className="badge">Started</span>
+            </button>
+          ))}
+          <button
+            className="language-btn other-btn"
+            onClick={() => setShowCustomInput(true)}
+            disabled={isBootstrapping || showCustomInput}
+          >
+            Other...
+          </button>
         </div>
+        {showCustomInput && (
+          <div className="custom-language-input">
+            <input
+              type="text"
+              value={customLanguage}
+              onChange={(e) => setCustomLanguage(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && selectLanguage(customLanguage)}
+              placeholder="Enter language name..."
+              autoFocus
+            />
+            <button onClick={() => selectLanguage(customLanguage)} disabled={!customLanguage.trim()}>
+              Start
+            </button>
+            <button className="cancel-btn" onClick={() => setShowCustomInput(false)}>
+              Cancel
+            </button>
+          </div>
+        )}
       </div>
     );
   }

@@ -76,6 +76,70 @@ header {
   border-color: #0066cc;
 }
 
+.language-btn.existing {
+  border-color: #28a745;
+}
+
+.language-btn .badge {
+  display: block;
+  font-size: 0.7rem;
+  color: #28a745;
+  margin-top: 0.25rem;
+}
+
+.language-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.language-btn.other-btn {
+  border-style: dashed;
+  color: #666;
+}
+
+.custom-language-input {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.custom-language-input input {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  border: 2px solid #0066cc;
+  border-radius: 8px;
+  outline: none;
+}
+
+.custom-language-input button {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.custom-language-input button:hover:not(:disabled) {
+  background: #0052a3;
+}
+
+.custom-language-input button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.custom-language-input .cancel-btn {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.custom-language-input .cancel-btn:hover {
+  background: #e0e0e0;
+}
+
 .chat-container {
   flex: 1;
   overflow-y: auto;
