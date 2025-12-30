@@ -3,9 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 
 type Message = {
+  id: string;
   role: "user" | "assistant";
   content: string;
 };
+
+let messageIdCounter = 0;
+function generateMessageId(): string {
+  return `msg-${Date.now()}-${++messageIdCounter}`;
+}
 
 type Props = {
   language: string;
@@ -32,8 +38,8 @@ export default function ChatView({ language, onBack }: Props) {
   async function loadChatHistory() {
     setIsLoadingHistory(true);
     try {
-      const history = await invoke<Message[]>("get_chat_history", { language });
-      setMessages(history);
+      const history = await invoke<Omit<Message, "id">[]>("get_chat_history", { language });
+      setMessages(history.map(msg => ({ ...msg, id: generateMessageId() })));
     } catch (error) {
       console.error("Failed to load chat history:", error);
       setMessages([]);
@@ -47,7 +53,7 @@ export default function ChatView({ language, onBack }: Props) {
 
     const userMessage = input.trim();
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setMessages((prev) => [...prev, { id: generateMessageId(), role: "user", content: userMessage }]);
     setIsLoading(true);
 
     try {
@@ -55,11 +61,11 @@ export default function ChatView({ language, onBack }: Props) {
         message: userMessage,
         language,
       });
-      setMessages((prev) => [...prev, { role: "assistant", content: response }]);
+      setMessages((prev) => [...prev, { id: generateMessageId(), role: "assistant", content: response }]);
     } catch (error) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `Error: ${error}` },
+        { id: generateMessageId(), role: "assistant", content: `Error: ${error}` },
       ]);
     } finally {
       setIsLoading(false);
@@ -84,8 +90,8 @@ export default function ChatView({ language, onBack }: Props) {
         {!isLoadingHistory && messages.length === 0 && (
           <p className="hint">Say hello to start learning!</p>
         )}
-        {messages.map((msg, i) => (
-          <div key={i} className={`message ${msg.role}`}>
+        {messages.map((msg) => (
+          <div key={msg.id} className={`message ${msg.role}`}>
             <ReactMarkdown>{msg.content}</ReactMarkdown>
           </div>
         ))}
