@@ -1,18 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
+import { getErrorMessage, capitalize } from "../utils/strings";
 
 type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
 };
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return "Unknown error";
-}
 
 let messageIdCounter = 0;
 function generateMessageId(): string {
@@ -78,7 +73,7 @@ export default function ChatView({ language, onBack }: Props) {
     }
   }
 
-  const displayName = language.charAt(0).toUpperCase() + language.slice(1);
+  const displayName = capitalize(language);
 
   return (
     <div className="container">

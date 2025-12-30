@@ -1,18 +1,8 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getErrorMessage, isLanguageInList, normalizeLanguage } from "../utils/strings";
 
 const PRESET_LANGUAGES = ["Chinese", "Korean", "Japanese", "Spanish", "French", "German"];
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return "Unknown error";
-}
-
-function isLanguageInList(language: string, list: string[]): boolean {
-  const normalized = language.toLowerCase();
-  return list.some(l => l.toLowerCase() === normalized);
-}
 
 type Props = {
   existingLanguages: string[];
@@ -29,8 +19,8 @@ export default function LanguageSelector({ existingLanguages, onLanguageSelected
   async function selectLanguage(lang: string) {
     if (!lang.trim()) return;
 
-    const langLower = lang.toLowerCase();
-    const exists = isLanguageInList(langLower, existingLanguages);
+    const normalized = normalizeLanguage(lang);
+    const exists = isLanguageInList(normalized, existingLanguages);
 
     if (!exists) {
       setIsBootstrapping(true);
@@ -48,7 +38,7 @@ export default function LanguageSelector({ existingLanguages, onLanguageSelected
 
     setShowCustomInput(false);
     setCustomLanguage("");
-    onLanguageSelected(langLower);
+    onLanguageSelected(normalized);
   }
 
   const customExisting = existingLanguages.filter(
