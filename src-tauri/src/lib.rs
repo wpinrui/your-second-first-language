@@ -39,72 +39,95 @@ const USER_OVERRIDES_TEMPLATE: &str = r#"{
 const TRACKER_TIMEOUT_SECS: u64 = 60;
 
 // ============================================================================
-// Language-specific notes
+// Language-specific configuration
 // ============================================================================
 
-fn get_language_notes(language: &str) -> &'static str {
+struct LanguageInfo {
+    native_script: &'static str,
+    romanization: &'static str,
+    notes: &'static str,
+}
+
+const DEFAULT_LANGUAGE_INFO: LanguageInfo = LanguageInfo {
+    native_script: "Native Script",
+    romanization: "none",
+    notes: r#"## Language-Specific Considerations
+
+- Research and add language-specific grammar patterns as you encounter them
+- Pay attention to any unique features of this language
+- Adapt greeting and teaching style to cultural norms
+- Start with the simplest possible greeting and self-introduction"#,
+};
+
+fn get_language_info(language: &str) -> LanguageInfo {
     match language.to_lowercase().as_str() {
-        "chinese" | "mandarin" => r#"## Chinese-Specific Considerations
+        "chinese" | "mandarin" => LanguageInfo {
+            native_script: "汉字",
+            romanization: "pinyin",
+            notes: r#"## Chinese-Specific Considerations
 
 - **Tones**: Pay attention to tone usage in learner's pinyin (if provided)
 - **Characters vs Pinyin**: Track if learner uses characters or pinyin
 - **Measure words (量词)**: Track these as grammar constructs
 - **Common structures**: 是...的, 把-sentences, 被-passive, 了/过/着 aspects
 - **Cold start**: Use "👋 你好 (nǐ hǎo)" - one word with emoji and pinyin"#,
-        "korean" => r#"## Korean-Specific Considerations
+        },
+        "korean" => LanguageInfo {
+            native_script: "한글",
+            romanization: "none",
+            notes: r#"## Korean-Specific Considerations
 
 - **Politeness levels**: Track which speech levels the learner knows (합쇼체, 해요체, 해체, etc.)
 - **Particles**: Track particles (은/는, 이/가, 을/를, etc.) as grammar
 - **Verb conjugation**: Track tense and politeness conjugation patterns
 - **Honorifics**: Note when learner uses/should use honorific forms
 - **Cold start**: Use "👋 안녕 (annyeong)" - one word with emoji and romanization"#,
-        "japanese" => r#"## Japanese-Specific Considerations
+        },
+        "japanese" => LanguageInfo {
+            native_script: "日本語",
+            romanization: "romaji",
+            notes: r#"## Japanese-Specific Considerations
 
 - **Politeness levels**: Track です/ます vs casual forms
 - **Particles**: Track particles (は, が, を, に, で, etc.) as grammar
 - **Verb groups**: Note which verb conjugation patterns learner knows
 - **Kanji vs Kana**: Track which kanji the learner knows
 - **Cold start**: Use "👋 こんにちは (konnichiwa)" - one word with emoji and romaji"#,
-        "spanish" => r#"## Spanish-Specific Considerations
+        },
+        "spanish" => LanguageInfo {
+            native_script: "Español",
+            romanization: "none",
+            notes: r#"## Spanish-Specific Considerations
 
 - **Verb conjugation**: Track which tenses and moods learner knows
 - **Ser vs Estar**: Track as separate grammar constructs
 - **Subjunctive**: Introduce gradually, it's complex
 - **Gender agreement**: Track as grammar construct
 - **Cold start**: Use "👋 Hola" - one word with emoji"#,
-        "french" => r#"## French-Specific Considerations
+        },
+        "french" => LanguageInfo {
+            native_script: "Français",
+            romanization: "none",
+            notes: r#"## French-Specific Considerations
 
 - **Verb conjugation**: Track which tenses and moods learner knows
 - **Gender and articles**: Track as grammar constructs
 - **Liaisons**: Note pronunciation patterns
 - **Formal vs informal (tu/vous)**: Track which the learner uses
 - **Cold start**: Use "👋 Bonjour" - one word with emoji"#,
-        "german" => r#"## German-Specific Considerations
+        },
+        "german" => LanguageInfo {
+            native_script: "Deutsch",
+            romanization: "none",
+            notes: r#"## German-Specific Considerations
 
 - **Cases**: Track nominative, accusative, dative, genitive separately
 - **Verb position**: Track V2 rule, subordinate clause order
 - **Gender and articles**: Track der/die/das patterns
 - **Formal vs informal (Sie/du)**: Track which the learner uses
 - **Cold start**: Use "👋 Hallo" - one word with emoji"#,
-        _ => r#"## Language-Specific Considerations
-
-- Research and add language-specific grammar patterns as you encounter them
-- Pay attention to any unique features of this language
-- Adapt greeting and teaching style to cultural norms
-- Start with the simplest possible greeting and self-introduction"#,
-    }
-}
-
-fn get_language_config(language: &str) -> (&'static str, &'static str) {
-    // Returns (native_script, romanization)
-    match language.to_lowercase().as_str() {
-        "chinese" | "mandarin" => ("汉字", "pinyin"),
-        "korean" => ("한글", "none"),
-        "japanese" => ("日本語", "romaji"),
-        "spanish" => ("Español", "none"),
-        "french" => ("Français", "none"),
-        "german" => ("Deutsch", "none"),
-        _ => ("Native Script", "none"),
+        },
+        _ => DEFAULT_LANGUAGE_INFO,
     }
 }
 
@@ -321,14 +344,13 @@ fn write_language_file(dir: &Path, filename: &str, content: &str) -> Result<(), 
 }
 
 fn generate_language_files(lang_dir: &Path, language: &str) -> Result<(), String> {
-    let (native_script, romanization) = get_language_config(language);
-    let language_notes = get_language_notes(language);
+    let info = get_language_info(language);
 
     let claude_md = TUTOR_TEMPLATE
         .replace("{{LANGUAGE_NAME}}", language)
-        .replace("{{LANGUAGE_NATIVE}}", native_script)
-        .replace("{{ROMANIZATION}}", romanization)
-        .replace("{{LANGUAGE_SPECIFIC_NOTES}}", language_notes);
+        .replace("{{LANGUAGE_NATIVE}}", info.native_script)
+        .replace("{{ROMANIZATION}}", info.romanization)
+        .replace("{{LANGUAGE_SPECIFIC_NOTES}}", info.notes);
     write_language_file(lang_dir, "CLAUDE.md", &claude_md)?;
 
     let vocab = VOCABULARY_TEMPLATE.replace("{{LANGUAGE_NAME}}", language);
@@ -342,8 +364,8 @@ fn generate_language_files(lang_dir: &Path, language: &str) -> Result<(), String
 
     let config = LanguageConfig {
         language: language.to_string(),
-        native_script: native_script.to_string(),
-        romanization: romanization.to_string(),
+        native_script: info.native_script.to_string(),
+        romanization: info.romanization.to_string(),
         started: Local::now().format("%Y-%m-%d").to_string(),
     };
     let config_json = serde_json::to_string_pretty(&config)

@@ -45,6 +45,11 @@ export default function LanguageSelector({ existingLanguages, onLanguageSelected
     lang => !isLanguageInList(lang, PRESET_LANGUAGES)
   );
 
+  const allLanguages = [
+    ...PRESET_LANGUAGES.map(lang => ({ name: lang, isExisting: isLanguageInList(lang, existingLanguages) })),
+    ...customExisting.map(lang => ({ name: lang, isExisting: true })),
+  ];
+
   return (
     <div className="container">
       <h1>Your Second First Language</h1>
@@ -52,29 +57,15 @@ export default function LanguageSelector({ existingLanguages, onLanguageSelected
       {isBootstrapping && <p className="hint">Setting up language...</p>}
       {bootstrapError && <p className="error">{bootstrapError}</p>}
       <div className="language-grid">
-        {PRESET_LANGUAGES.map((lang) => {
-          const isExisting = isLanguageInList(lang, existingLanguages);
-          return (
-            <button
-              key={lang}
-              className={`language-btn ${isExisting ? "existing" : ""}`}
-              onClick={() => selectLanguage(lang)}
-              disabled={isBootstrapping}
-            >
-              {lang}
-              {isExisting && <span className="badge">Started</span>}
-            </button>
-          );
-        })}
-        {customExisting.map((lang) => (
+        {allLanguages.map(({ name, isExisting }) => (
           <button
-            key={lang}
-            className="language-btn existing"
-            onClick={() => selectLanguage(lang)}
+            key={name}
+            className={`language-btn ${isExisting ? "existing" : ""}`}
+            onClick={() => selectLanguage(name)}
             disabled={isBootstrapping}
           >
-            {lang}
-            <span className="badge">Started</span>
+            {name}
+            {isExisting && <span className="badge">Started</span>}
           </button>
         ))}
         <button
