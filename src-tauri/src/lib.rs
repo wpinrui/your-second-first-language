@@ -35,7 +35,9 @@ const USER_OVERRIDES_TEMPLATE: &str = r#"{
   "notes": ""
 }"#;
 
-/// Timeout for the background tracker agent
+/// Timeout for the background tracker agent.
+/// Set to 60 seconds to allow enough time for Claude to read vocabulary/grammar files,
+/// process the message, and write updates. Shorter timeouts may cause incomplete updates.
 const TRACKER_TIMEOUT_SECS: u64 = 60;
 
 // ============================================================================
@@ -496,6 +498,8 @@ async fn run_responder_agent(lang_dir: &Path, message: &str) -> Result<String, S
     }
 }
 
+/// Maximum message length in characters.
+/// Prevents excessively long inputs that could slow down or overwhelm Claude.
 const MAX_MESSAGE_LENGTH: usize = 10000;
 
 #[tauri::command]
