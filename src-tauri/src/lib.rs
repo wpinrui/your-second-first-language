@@ -258,6 +258,7 @@ struct ChatMessage {
 #[cfg(windows)]
 fn hide_console_window(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
+    // Windows API flag to prevent spawning a visible console window
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
