@@ -105,6 +105,61 @@ fn get_language_config(language: &str) -> (&'static str, &'static str) {
 }
 
 // ============================================================================
+// JSON message extraction helpers
+// ============================================================================
+
+fn extract_user_message(json: &Value) -> Option<String> {
+    if json.get("type")?.as_str()? != "user" {
+        return None;
+    }
+
+    let msg = json.get("message")?;
+    if msg.get("role")?.as_str()? != "user" {
+        return None;
+    }
+
+    let content = msg.get("content")?;
+
+    if let Some(s) = content.as_str() {
+        return Some(s.to_string());
+    }
+
+    // If content is an array, skip tool results
+    if let Some(arr) = content.as_array() {
+        if arr.iter().any(|item| {
+            item.get("type").and_then(|v| v.as_str()) == Some("tool_result")
+        }) {
+            return None;
+        }
+    }
+
+    None
+}
+
+fn extract_assistant_message(json: &Value) -> Option<String> {
+    if json.get("type")?.as_str()? != "assistant" {
+        return None;
+    }
+
+    let msg = json.get("message")?;
+    if msg.get("role")?.as_str()? != "assistant" {
+        return None;
+    }
+
+    let content = msg.get("content")?.as_array()?;
+
+    for item in content {
+        if item.get("type")?.as_str()? == "text" {
+            if let Some(text) = item.get("text")?.as_str() {
+                return Some(text.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+// ============================================================================
 // Data types
 // ============================================================================
 
@@ -451,64 +506,24 @@ fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
 
     let mut messages = Vec::new();
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
-
+    for line in reader.lines().flatten() {
         let json: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(_) => continue,
         };
 
-        // Extract user messages
-        if json.get("type").and_then(|v| v.as_str()) == Some("user") {
-            if let Some(msg) = json.get("message") {
-                if msg.get("role").and_then(|v| v.as_str()) == Some("user") {
-                    if let Some(content) = msg.get("content") {
-                        // Content can be a string or array
-                        let text = if let Some(s) = content.as_str() {
-                            s.to_string()
-                        } else if let Some(arr) = content.as_array() {
-                            // Skip tool results
-                            if arr.iter().any(|item| {
-                                item.get("type").and_then(|v| v.as_str()) == Some("tool_result")
-                            }) {
-                                continue;
-                            }
-                            continue;
-                        } else {
-                            continue;
-                        };
-
-                        messages.push(ChatMessage {
-                            role: "user".to_string(),
-                            content: text,
-                        });
-                    }
-                }
-            }
+        if let Some(text) = extract_user_message(&json) {
+            messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: text,
+            });
         }
 
-        // Extract assistant text responses
-        if json.get("type").and_then(|v| v.as_str()) == Some("assistant") {
-            if let Some(msg) = json.get("message") {
-                if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
-                    if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
-                        for item in content {
-                            if item.get("type").and_then(|v| v.as_str()) == Some("text") {
-                                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                                    messages.push(ChatMessage {
-                                        role: "assistant".to_string(),
-                                        content: text.to_string(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        if let Some(text) = extract_assistant_message(&json) {
+            messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: text,
+            });
         }
     }
 
