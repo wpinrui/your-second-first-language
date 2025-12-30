@@ -160,10 +160,13 @@ fn parse_chat_messages_from_jsonl(path: &Path) -> Result<Vec<ChatMessage>, Strin
     let reader = BufReader::new(file);
     let mut messages = Vec::new();
 
-    for line in reader.lines().flatten() {
+    for (line_num, line) in reader.lines().flatten().enumerate() {
         let json: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(e) => {
+                eprintln!("[Chat history] Skipping malformed JSON at line {}: {}", line_num + 1, e);
+                continue;
+            }
         };
 
         if let Some(text) = extract_user_message(&json) {
