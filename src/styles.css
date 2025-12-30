@@ -2,8 +2,11 @@
   /* Colors - Light mode */
   --color-primary: #0066cc;
   --color-primary-dark: #0052a3;
+  --color-primary-hover-bg: #e8f4f8;
   --color-success: #28a745;
+  --color-error: #dc3545;
   --color-text: #213547;
+  --color-text-dark: #333;
   --color-text-muted: #666;
   --color-bg: #ffffff;
   --color-bg-secondary: #f0f0f0;
@@ -99,7 +102,7 @@ header {
 }
 
 .language-btn:hover {
-  background: #e8f4f8;
+  background: var(--color-primary-hover-bg);
   border-color: var(--color-primary);
 }
 
@@ -160,7 +163,7 @@ header {
 
 .custom-language-input .cancel-btn {
   background: var(--color-bg-secondary);
-  color: #333;
+  color: var(--color-text-dark);
 }
 
 .custom-language-input .cancel-btn:hover {
@@ -202,7 +205,7 @@ header {
 }
 
 .error {
-  color: #dc3545;
+  color: var(--color-error);
   text-align: center;
   margin-top: var(--spacing-lg);
   padding: var(--spacing-md);
@@ -351,7 +354,9 @@ header {
 @media (prefers-color-scheme: dark) {
   :root {
     /* Colors - Dark mode overrides */
+    --color-primary-hover-bg: #333;
     --color-text: #f0f0f0;
+    --color-text-dark: #f0f0f0;
     --color-bg: #1a1a1a;
     --color-bg-secondary: #2a2a2a;
     --color-bg-tertiary: #2a2a2a;
@@ -361,8 +366,8 @@ header {
   }
 
   .language-btn:hover {
-    background: #333;
-    border-color: #0088ff;
+    background: var(--color-primary-hover-bg);
+    border-color: var(--color-primary);
   }
 
   .message.assistant code {
