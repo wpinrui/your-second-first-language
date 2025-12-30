@@ -1,8 +1,9 @@
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -34,74 +35,220 @@ const USER_OVERRIDES_TEMPLATE: &str = r#"{
   "notes": ""
 }"#;
 
+/// Timeout for the background tracker agent.
+/// Set to 60 seconds to allow enough time for Claude to read vocabulary/grammar files,
+/// process the message, and write updates. Shorter timeouts may cause incomplete updates.
+const TRACKER_TIMEOUT_SECS: u64 = 60;
+
 // ============================================================================
-// Language-specific notes
+// Language-specific configuration
 // ============================================================================
 
-fn get_language_notes(language: &str) -> &'static str {
+struct LanguageInfo {
+    native_script: &'static str,
+    romanization: &'static str,
+    notes: &'static str,
+}
+
+const DEFAULT_LANGUAGE_INFO: LanguageInfo = LanguageInfo {
+    native_script: "Native Script",
+    romanization: "none",
+    notes: r#"## Language-Specific Considerations
+
+- Research and add language-specific grammar patterns as you encounter them
+- Pay attention to any unique features of this language
+- Adapt greeting and teaching style to cultural norms
+- Start with the simplest possible greeting and self-introduction"#,
+};
+
+fn get_language_info(language: &str) -> LanguageInfo {
     match language.to_lowercase().as_str() {
-        "chinese" | "mandarin" => r#"## Chinese-Specific Considerations
+        "chinese" | "mandarin" => LanguageInfo {
+            native_script: "汉字",
+            romanization: "pinyin",
+            notes: r#"## Chinese-Specific Considerations
 
 - **Tones**: Pay attention to tone usage in learner's pinyin (if provided)
 - **Characters vs Pinyin**: Track if learner uses characters or pinyin
 - **Measure words (量词)**: Track these as grammar constructs
 - **Common structures**: 是...的, 把-sentences, 被-passive, 了/过/着 aspects
 - **Cold start**: Use "👋 你好 (nǐ hǎo)" - one word with emoji and pinyin"#,
-        "korean" => r#"## Korean-Specific Considerations
+        },
+        "korean" => LanguageInfo {
+            native_script: "한글",
+            romanization: "none",
+            notes: r#"## Korean-Specific Considerations
 
 - **Politeness levels**: Track which speech levels the learner knows (합쇼체, 해요체, 해체, etc.)
 - **Particles**: Track particles (은/는, 이/가, 을/를, etc.) as grammar
 - **Verb conjugation**: Track tense and politeness conjugation patterns
 - **Honorifics**: Note when learner uses/should use honorific forms
 - **Cold start**: Use "👋 안녕 (annyeong)" - one word with emoji and romanization"#,
-        "japanese" => r#"## Japanese-Specific Considerations
+        },
+        "japanese" => LanguageInfo {
+            native_script: "日本語",
+            romanization: "romaji",
+            notes: r#"## Japanese-Specific Considerations
 
 - **Politeness levels**: Track です/ます vs casual forms
 - **Particles**: Track particles (は, が, を, に, で, etc.) as grammar
 - **Verb groups**: Note which verb conjugation patterns learner knows
 - **Kanji vs Kana**: Track which kanji the learner knows
 - **Cold start**: Use "👋 こんにちは (konnichiwa)" - one word with emoji and romaji"#,
-        "spanish" => r#"## Spanish-Specific Considerations
+        },
+        "spanish" => LanguageInfo {
+            native_script: "Español",
+            romanization: "none",
+            notes: r#"## Spanish-Specific Considerations
 
 - **Verb conjugation**: Track which tenses and moods learner knows
 - **Ser vs Estar**: Track as separate grammar constructs
 - **Subjunctive**: Introduce gradually, it's complex
 - **Gender agreement**: Track as grammar construct
 - **Cold start**: Use "👋 Hola" - one word with emoji"#,
-        "french" => r#"## French-Specific Considerations
+        },
+        "french" => LanguageInfo {
+            native_script: "Français",
+            romanization: "none",
+            notes: r#"## French-Specific Considerations
 
 - **Verb conjugation**: Track which tenses and moods learner knows
 - **Gender and articles**: Track as grammar constructs
 - **Liaisons**: Note pronunciation patterns
 - **Formal vs informal (tu/vous)**: Track which the learner uses
 - **Cold start**: Use "👋 Bonjour" - one word with emoji"#,
-        "german" => r#"## German-Specific Considerations
+        },
+        "german" => LanguageInfo {
+            native_script: "Deutsch",
+            romanization: "none",
+            notes: r#"## German-Specific Considerations
 
 - **Cases**: Track nominative, accusative, dative, genitive separately
 - **Verb position**: Track V2 rule, subordinate clause order
 - **Gender and articles**: Track der/die/das patterns
 - **Formal vs informal (Sie/du)**: Track which the learner uses
 - **Cold start**: Use "👋 Hallo" - one word with emoji"#,
-        _ => r#"## Language-Specific Considerations
-
-- Research and add language-specific grammar patterns as you encounter them
-- Pay attention to any unique features of this language
-- Adapt greeting and teaching style to cultural norms
-- Start with the simplest possible greeting and self-introduction"#,
+        },
+        _ => DEFAULT_LANGUAGE_INFO,
     }
 }
 
-fn get_language_config(language: &str) -> (&'static str, &'static str) {
-    // Returns (native_script, romanization)
-    match language.to_lowercase().as_str() {
-        "chinese" | "mandarin" => ("汉字", "pinyin"),
-        "korean" => ("한글", "none"),
-        "japanese" => ("日本語", "romaji"),
-        "spanish" => ("Español", "none"),
-        "french" => ("Français", "none"),
-        "german" => ("Deutsch", "none"),
-        _ => ("Native Script", "none"),
+// ============================================================================
+// File system helpers
+// ============================================================================
+
+fn find_latest_jsonl_file(dir: &Path) -> Option<PathBuf> {
+    let mut jsonl_files: Vec<_> = fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry_result| match entry_result {
+            Ok(e) => Some(e),
+            Err(e) => {
+                eprintln!("[find_latest_jsonl] Error reading directory entry: {}", e);
+                None
+            }
+        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+        .collect();
+
+    if jsonl_files.is_empty() {
+        return None;
     }
+
+    jsonl_files.sort_by(|a, b| {
+        let a_time = a.metadata().and_then(|m| m.modified()).ok();
+        let b_time = b.metadata().and_then(|m| m.modified()).ok();
+        b_time.cmp(&a_time)
+    });
+
+    jsonl_files.first().map(|e| e.path())
+}
+
+fn parse_chat_messages_from_jsonl(path: &Path) -> Result<Vec<ChatMessage>, String> {
+    let file = File::open(path).map_err(|e| format!("Failed to open JSONL: {}", e))?;
+    let reader = BufReader::new(file);
+    let mut messages = Vec::new();
+
+    for (line_num, line_result) in reader.lines().enumerate() {
+        let line = match line_result {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("[Chat history] IO error reading line {}: {}", line_num + 1, e);
+                continue;
+            }
+        };
+
+        let json: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[Chat history] Skipping malformed JSON at line {}: {}", line_num + 1, e);
+                continue;
+            }
+        };
+
+        if let Some(text) = extract_user_message(&json) {
+            messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: text,
+            });
+        }
+
+        if let Some(text) = extract_assistant_message(&json) {
+            messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: text,
+            });
+        }
+    }
+
+    Ok(messages)
+}
+
+// ============================================================================
+// JSON message extraction helpers
+// ============================================================================
+
+fn get_message_content<'a>(json: &'a Value, role: &str) -> Option<&'a Value> {
+    if json.get("type")?.as_str()? != role {
+        return None;
+    }
+    let msg = json.get("message")?;
+    if msg.get("role")?.as_str()? != role {
+        return None;
+    }
+    msg.get("content")
+}
+
+fn extract_user_message(json: &Value) -> Option<String> {
+    let content = get_message_content(json, "user")?;
+
+    if let Some(s) = content.as_str() {
+        return Some(s.to_string());
+    }
+
+    // If content is an array, skip tool results
+    if let Some(arr) = content.as_array() {
+        if arr.iter().any(|item| {
+            item.get("type").and_then(|v| v.as_str()) == Some("tool_result")
+        }) {
+            return None;
+        }
+    }
+
+    None
+}
+
+fn extract_assistant_message(json: &Value) -> Option<String> {
+    let content = get_message_content(json, "assistant")?.as_array()?;
+
+    for item in content {
+        if item.get("type")?.as_str()? == "text" {
+            if let Some(text) = item.get("text")?.as_str() {
+                return Some(text.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 // ============================================================================
@@ -123,6 +270,24 @@ struct ChatMessage {
 }
 
 // ============================================================================
+// Platform helpers
+// ============================================================================
+
+/// Configures Command to hide the console window on Windows
+#[cfg(windows)]
+fn hide_console_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    // Windows API flag to prevent spawning a visible console window
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_console_window(_cmd: &mut Command) {
+    // No-op on non-Windows platforms
+}
+
+// ============================================================================
 // Path helpers
 // ============================================================================
 
@@ -138,9 +303,35 @@ fn get_data_dir() -> Result<PathBuf, String> {
     Ok(get_exe_dir()?.join("data"))
 }
 
+fn validate_language_name(language: &str) -> Result<(), String> {
+    if language.is_empty() {
+        return Err("Language name cannot be empty".to_string());
+    }
+    if language.contains("..") || language.contains('/') || language.contains('\\') {
+        return Err("Language name contains invalid characters".to_string());
+    }
+    if !language.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-') {
+        return Err("Language name can only contain letters, numbers, spaces, and hyphens".to_string());
+    }
+    Ok(())
+}
+
+fn get_language_dir(language: &str) -> Result<PathBuf, String> {
+    validate_language_name(language)?;
+    Ok(get_data_dir()?.join(language.to_lowercase()))
+}
+
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 /// Derives the Claude CLI project path from a directory.
 /// E.g., C:\Users\wongp\Desktop\lang\data\korean -> ~/.claude/projects/C--Users-wongp-Desktop-lang-data-korean
-fn get_claude_project_dir(dir: &PathBuf) -> Result<PathBuf, String> {
+fn get_claude_project_dir(dir: &Path) -> Result<PathBuf, String> {
     let canonical = dir
         .canonicalize()
         .map_err(|e| format!("Failed to canonicalize path: {}", e))?;
@@ -164,63 +355,60 @@ fn get_claude_project_dir(dir: &PathBuf) -> Result<PathBuf, String> {
 }
 
 // ============================================================================
+// Bootstrap helpers
+// ============================================================================
+
+fn write_language_file(dir: &Path, filename: &str, content: &str) -> Result<(), String> {
+    fs::write(dir.join(filename), content)
+        .map_err(|e| format!("Failed to write {}: {}", filename, e))
+}
+
+fn generate_language_files(lang_dir: &Path, language: &str) -> Result<(), String> {
+    let info = get_language_info(language);
+
+    let claude_md = TUTOR_TEMPLATE
+        .replace("{{LANGUAGE_NAME}}", language)
+        .replace("{{LANGUAGE_NATIVE}}", info.native_script)
+        .replace("{{ROMANIZATION}}", info.romanization)
+        .replace("{{LANGUAGE_SPECIFIC_NOTES}}", info.notes);
+    write_language_file(lang_dir, "CLAUDE.md", &claude_md)?;
+
+    let vocab = VOCABULARY_TEMPLATE.replace("{{LANGUAGE_NAME}}", language);
+    write_language_file(lang_dir, "vocabulary.json", &vocab)?;
+
+    let grammar = GRAMMAR_TEMPLATE.replace("{{LANGUAGE_NAME}}", language);
+    write_language_file(lang_dir, "grammar.json", &grammar)?;
+
+    let overrides = USER_OVERRIDES_TEMPLATE.replace("{{LANGUAGE_NAME}}", language);
+    write_language_file(lang_dir, "user-overrides.json", &overrides)?;
+
+    let config = LanguageConfig {
+        language: language.to_string(),
+        native_script: info.native_script.to_string(),
+        romanization: info.romanization.to_string(),
+        started: Local::now().format("%Y-%m-%d").to_string(),
+    };
+    let config_json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    write_language_file(lang_dir, "config.json", &config_json)
+}
+
+// ============================================================================
 // Commands
 // ============================================================================
 
 #[tauri::command]
 fn bootstrap_language(language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let lang_lower = language.to_lowercase();
-    let lang_dir = data_dir.join(&lang_lower);
+    let lang_dir = get_language_dir(&language)?;
 
-    // Check if already exists
     if lang_dir.exists() {
         return Err(format!("Language '{}' already exists", language));
     }
 
-    // Create directory
     fs::create_dir_all(&lang_dir)
         .map_err(|e| format!("Failed to create language directory: {}", e))?;
 
-    // Get language-specific config
-    let (native_script, romanization) = get_language_config(&language);
-    let language_notes = get_language_notes(&language);
-
-    // Generate CLAUDE.md
-    let claude_md = TUTOR_TEMPLATE
-        .replace("{{LANGUAGE_NAME}}", &language)
-        .replace("{{LANGUAGE_NATIVE}}", native_script)
-        .replace("{{ROMANIZATION}}", romanization)
-        .replace("{{LANGUAGE_SPECIFIC_NOTES}}", language_notes);
-    fs::write(lang_dir.join("CLAUDE.md"), claude_md)
-        .map_err(|e| format!("Failed to write CLAUDE.md: {}", e))?;
-
-    // Generate vocabulary.json
-    let vocab = VOCABULARY_TEMPLATE.replace("{{LANGUAGE_NAME}}", &language);
-    fs::write(lang_dir.join("vocabulary.json"), vocab)
-        .map_err(|e| format!("Failed to write vocabulary.json: {}", e))?;
-
-    // Generate grammar.json
-    let grammar = GRAMMAR_TEMPLATE.replace("{{LANGUAGE_NAME}}", &language);
-    fs::write(lang_dir.join("grammar.json"), grammar)
-        .map_err(|e| format!("Failed to write grammar.json: {}", e))?;
-
-    // Generate user-overrides.json
-    let overrides = USER_OVERRIDES_TEMPLATE.replace("{{LANGUAGE_NAME}}", &language);
-    fs::write(lang_dir.join("user-overrides.json"), overrides)
-        .map_err(|e| format!("Failed to write user-overrides.json: {}", e))?;
-
-    // Generate config.json
-    let config = LanguageConfig {
-        language: language.clone(),
-        native_script: native_script.to_string(),
-        romanization: romanization.to_string(),
-        started: Local::now().format("%Y-%m-%d").to_string(),
-    };
-    let config_json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    fs::write(lang_dir.join("config.json"), config_json)
-        .map_err(|e| format!("Failed to write config.json: {}", e))?;
+    generate_language_files(&lang_dir, &language)?;
 
     Ok(format!("Successfully bootstrapped {}", language))
 }
@@ -251,10 +439,83 @@ SM-2 Algorithm (when learner uses a word correctly):
 
 IMPORTANT: Check for duplicates by word/rule field. Update existing entries, don't create duplicates."#;
 
+fn spawn_tracker_agent(lang_dir: PathBuf, message: String) {
+    tokio::spawn(async move {
+        let tracker_dir = lang_dir.join(".tracker");
+        if let Err(e) = fs::create_dir_all(&tracker_dir) {
+            eprintln!("[Tracker] Failed to create tracker directory: {}", e);
+            return;
+        }
+
+        let prompt = TRACKER_PROMPT.replace("{{MESSAGE}}", &message);
+        let task = tokio::task::spawn_blocking(move || {
+            let mut cmd = Command::new("claude");
+            cmd.arg("--dangerously-skip-permissions")
+                .arg("-p")
+                .arg(&prompt)
+                .current_dir(&tracker_dir);
+
+            hide_console_window(&mut cmd);
+            cmd.output()
+        });
+
+        let timeout = Duration::from_secs(TRACKER_TIMEOUT_SECS);
+        match tokio::time::timeout(timeout, task).await {
+            Err(_) => eprintln!("[Tracker] Timed out after {}s", TRACKER_TIMEOUT_SECS),
+            Ok(Err(e)) => eprintln!("[Tracker] Task join error: {}", e),
+            Ok(Ok(Err(e))) => eprintln!("[Tracker] Command error: {}", e),
+            Ok(Ok(Ok(_))) => {}
+        }
+    });
+}
+
+async fn run_responder_agent(lang_dir: &Path, message: &str) -> Result<String, String> {
+    let dir = lang_dir.to_path_buf();
+    let msg = message.to_string();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut cmd = Command::new("claude");
+        cmd.arg("--dangerously-skip-permissions")
+            .arg("--continue")
+            .arg("-p")
+            .arg(&msg)
+            .current_dir(&dir);
+
+        hide_console_window(&mut cmd);
+        cmd.output()
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| format!("Failed to run claude: {}", e))?;
+
+    if result.status.success() {
+        Ok(String::from_utf8_lossy(&result.stdout).trim().to_string())
+    } else {
+        Err(format!(
+            "Claude error: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ))
+    }
+}
+
+/// Maximum message length in characters.
+/// Prevents excessively long inputs that could slow down or overwhelm Claude.
+const MAX_MESSAGE_LENGTH: usize = 10000;
+
 #[tauri::command]
 async fn send_message(message: String, language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let lang_dir = data_dir.join(language.to_lowercase());
+    if message.trim().is_empty() {
+        return Err("Message cannot be empty".to_string());
+    }
+    if message.len() > MAX_MESSAGE_LENGTH {
+        return Err(format!(
+            "Message too long ({} chars). Maximum is {} chars.",
+            message.len(),
+            MAX_MESSAGE_LENGTH
+        ));
+    }
+
+    let lang_dir = get_language_dir(&language)?;
 
     if !lang_dir.exists() {
         return Err(format!(
@@ -263,84 +524,19 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
         ));
     }
 
-    // Clone for tracker agent
-    let tracker_lang_dir = lang_dir.clone();
-    let tracker_message = message.clone();
-
-    // Spawn tracker agent (fire and forget - don't wait for it)
-    // Uses a subdirectory so it gets a separate Claude project folder
-    let tracker_dir = tracker_lang_dir.join(".tracker");
-    let _ = fs::create_dir_all(&tracker_dir);
-
-    tokio::spawn(async move {
-        let prompt = TRACKER_PROMPT.replace("{{MESSAGE}}", &tracker_message);
-        let _ = tokio::task::spawn_blocking(move || {
-            let mut cmd = Command::new("claude");
-            cmd.arg("--dangerously-skip-permissions")
-                .arg("-p")
-                .arg(&prompt)
-                .current_dir(&tracker_dir);
-
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x08000000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-
-            cmd.output()
-        })
-        .await;
-    });
-
-    // Run responder agent (wait for response)
-    let result = tokio::task::spawn_blocking(move || {
-        let mut cmd = Command::new("claude");
-        cmd.arg("--dangerously-skip-permissions")
-            .arg("--continue") // Continue conversation for context
-            .arg("-p")
-            .arg(&message)
-            .current_dir(&lang_dir);
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        cmd.output()
-    })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?
-    .map_err(|e| format!("Failed to run claude: {}", e))?;
-
-    if result.status.success() {
-        let response = String::from_utf8_lossy(&result.stdout).to_string();
-        Ok(response.trim().to_string())
-    } else {
-        let error = String::from_utf8_lossy(&result.stderr).to_string();
-        Err(format!("Claude error: {}", error))
-    }
+    spawn_tracker_agent(lang_dir.clone(), message.clone());
+    run_responder_agent(&lang_dir, &message).await
 }
 
 #[tauri::command]
 fn get_vocabulary(language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let vocab_file = data_dir
-        .join(language.to_lowercase())
-        .join("vocabulary.json");
-
+    let vocab_file = get_language_dir(&language)?.join("vocabulary.json");
     fs::read_to_string(&vocab_file).map_err(|e| format!("Failed to read vocabulary: {}", e))
 }
 
 #[tauri::command]
 fn get_grammar(language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let grammar_file = data_dir
-        .join(language.to_lowercase())
-        .join("grammar.json");
-
+    let grammar_file = get_language_dir(&language)?.join("grammar.json");
     fs::read_to_string(&grammar_file).map_err(|e| format!("Failed to read grammar: {}", e))
 }
 
@@ -356,16 +552,17 @@ fn list_languages() -> Result<Vec<String>, String> {
     let entries =
         fs::read_dir(&data_dir).map_err(|e| format!("Failed to read data directory: {}", e))?;
 
-    for entry in entries.flatten() {
+    for entry_result in entries {
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("[list_languages] Error reading directory entry: {}", e);
+                continue;
+            }
+        };
         if entry.path().is_dir() {
             if let Some(name) = entry.file_name().to_str() {
-                // Capitalize first letter
-                let capitalized = name
-                    .chars()
-                    .next()
-                    .map(|c| c.to_uppercase().collect::<String>() + &name[1..])
-                    .unwrap_or_else(|| name.to_string());
-                languages.push(capitalized);
+                languages.push(capitalize_first(name));
             }
         }
     }
@@ -375,8 +572,7 @@ fn list_languages() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn delete_language(language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let lang_dir = data_dir.join(language.to_lowercase());
+    let lang_dir = get_language_dir(&language)?;
 
     if !lang_dir.exists() {
         return Err(format!("Language '{}' does not exist", language));
@@ -388,25 +584,8 @@ fn delete_language(language: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn debug_paths(language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let lang_dir = data_dir.join(language.to_lowercase());
-    let claude_project_dir = get_claude_project_dir(&lang_dir)?;
-
-    Ok(format!(
-        "data_dir: {:?}\nlang_dir: {:?}\nlang_dir exists: {}\nclaude_project_dir: {:?}\nclaude_project_dir exists: {}",
-        data_dir,
-        lang_dir,
-        lang_dir.exists(),
-        claude_project_dir,
-        claude_project_dir.exists()
-    ))
-}
-
-#[tauri::command]
 fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
-    let data_dir = get_data_dir()?;
-    let lang_dir = data_dir.join(language.to_lowercase());
+    let lang_dir = get_language_dir(&language)?;
 
     if !lang_dir.exists() {
         return Err(format!("Language '{}' not set up", language));
@@ -415,104 +594,13 @@ fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
     let claude_project_dir = get_claude_project_dir(&lang_dir)?;
 
     if !claude_project_dir.exists() {
-        // No conversation history yet - return debug info in a fake message
-        return Ok(vec![ChatMessage {
-            role: "assistant".to_string(),
-            content: format!("[DEBUG] No history found. Looking in: {:?}", claude_project_dir),
-        }]);
-    }
-
-    // Find the most recent .jsonl file
-    let mut jsonl_files: Vec<_> = fs::read_dir(&claude_project_dir)
-        .map_err(|e| format!("Failed to read Claude project dir: {}", e))?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "jsonl")
-                .unwrap_or(false)
-        })
-        .collect();
-
-    if jsonl_files.is_empty() {
         return Ok(vec![]);
     }
 
-    // Sort by modification time, most recent first
-    jsonl_files.sort_by(|a, b| {
-        let a_time = a.metadata().and_then(|m| m.modified()).ok();
-        let b_time = b.metadata().and_then(|m| m.modified()).ok();
-        b_time.cmp(&a_time)
-    });
-
-    let latest_file = &jsonl_files[0].path();
-    let file = File::open(latest_file).map_err(|e| format!("Failed to open JSONL: {}", e))?;
-    let reader = BufReader::new(file);
-
-    let mut messages = Vec::new();
-
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
-
-        let json: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        // Extract user messages
-        if json.get("type").and_then(|v| v.as_str()) == Some("user") {
-            if let Some(msg) = json.get("message") {
-                if msg.get("role").and_then(|v| v.as_str()) == Some("user") {
-                    if let Some(content) = msg.get("content") {
-                        // Content can be a string or array
-                        let text = if let Some(s) = content.as_str() {
-                            s.to_string()
-                        } else if let Some(arr) = content.as_array() {
-                            // Skip tool results
-                            if arr.iter().any(|item| {
-                                item.get("type").and_then(|v| v.as_str()) == Some("tool_result")
-                            }) {
-                                continue;
-                            }
-                            continue;
-                        } else {
-                            continue;
-                        };
-
-                        messages.push(ChatMessage {
-                            role: "user".to_string(),
-                            content: text,
-                        });
-                    }
-                }
-            }
-        }
-
-        // Extract assistant text responses
-        if json.get("type").and_then(|v| v.as_str()) == Some("assistant") {
-            if let Some(msg) = json.get("message") {
-                if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
-                    if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
-                        for item in content {
-                            if item.get("type").and_then(|v| v.as_str()) == Some("text") {
-                                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                                    messages.push(ChatMessage {
-                                        role: "assistant".to_string(),
-                                        content: text.to_string(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    match find_latest_jsonl_file(&claude_project_dir) {
+        Some(path) => parse_chat_messages_from_jsonl(&path),
+        None => Ok(vec![]),
     }
-
-    Ok(messages)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -526,9 +614,11 @@ pub fn run() {
             get_grammar,
             list_languages,
             delete_language,
-            get_chat_history,
-            debug_paths
+            get_chat_history
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to start application: {}", e);
+            std::process::exit(1);
+        });
 }
