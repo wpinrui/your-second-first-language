@@ -1,0 +1,13 @@
+{
+  "language": "{{LANGUAGE_NAME}}",
+  "difficulty": {
+    "level": "auto",
+    "notes": ""
+  },
+  "preferences": {
+    "new_vocab_per_exchange": 2,
+    "new_grammar_threshold": 0.8,
+    "show_romanization": true
+  },
+  "adjustments": []
+}
