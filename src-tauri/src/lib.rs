@@ -178,6 +178,23 @@ struct ChatMessage {
 }
 
 // ============================================================================
+// Platform helpers
+// ============================================================================
+
+/// Configures Command to hide the console window on Windows
+#[cfg(windows)]
+fn hide_console_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_console_window(_cmd: &mut Command) {
+    // No-op on non-Windows platforms
+}
+
+// ============================================================================
 // Path helpers
 // ============================================================================
 
@@ -336,13 +353,7 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
                 .arg(&prompt)
                 .current_dir(&tracker_dir);
 
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x08000000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-
+            hide_console_window(&mut cmd);
             cmd.output()
         })
         .await;
@@ -357,13 +368,7 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
             .arg(&message)
             .current_dir(&lang_dir);
 
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
+        hide_console_window(&mut cmd);
         cmd.output()
     })
     .await
