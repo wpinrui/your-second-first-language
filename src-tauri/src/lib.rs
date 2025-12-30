@@ -138,7 +138,13 @@ fn get_language_info(language: &str) -> LanguageInfo {
 fn find_latest_jsonl_file(dir: &Path) -> Option<PathBuf> {
     let mut jsonl_files: Vec<_> = fs::read_dir(dir)
         .ok()?
-        .filter_map(|e| e.ok())
+        .filter_map(|entry_result| match entry_result {
+            Ok(e) => Some(e),
+            Err(e) => {
+                eprintln!("[find_latest_jsonl] Error reading directory entry: {}", e);
+                None
+            }
+        })
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
         .collect();
 
@@ -160,7 +166,15 @@ fn parse_chat_messages_from_jsonl(path: &Path) -> Result<Vec<ChatMessage>, Strin
     let reader = BufReader::new(file);
     let mut messages = Vec::new();
 
-    for (line_num, line) in reader.lines().flatten().enumerate() {
+    for (line_num, line_result) in reader.lines().enumerate() {
+        let line = match line_result {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("[Chat history] IO error reading line {}: {}", line_num + 1, e);
+                continue;
+            }
+        };
+
         let json: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(e) => {
@@ -482,8 +496,21 @@ async fn run_responder_agent(lang_dir: &Path, message: &str) -> Result<String, S
     }
 }
 
+const MAX_MESSAGE_LENGTH: usize = 10000;
+
 #[tauri::command]
 async fn send_message(message: String, language: String) -> Result<String, String> {
+    if message.trim().is_empty() {
+        return Err("Message cannot be empty".to_string());
+    }
+    if message.len() > MAX_MESSAGE_LENGTH {
+        return Err(format!(
+            "Message too long ({} chars). Maximum is {} chars.",
+            message.len(),
+            MAX_MESSAGE_LENGTH
+        ));
+    }
+
     let lang_dir = get_language_dir(&language)?;
 
     if !lang_dir.exists() {
@@ -521,7 +548,14 @@ fn list_languages() -> Result<Vec<String>, String> {
     let entries =
         fs::read_dir(&data_dir).map_err(|e| format!("Failed to read data directory: {}", e))?;
 
-    for entry in entries.flatten() {
+    for entry_result in entries {
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("[list_languages] Error reading directory entry: {}", e);
+                continue;
+            }
+        };
         if entry.path().is_dir() {
             if let Some(name) = entry.file_name().to_str() {
                 languages.push(capitalize_first(name));
