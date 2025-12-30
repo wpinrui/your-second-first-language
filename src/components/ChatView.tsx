@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import { getErrorMessage, capitalize } from "../utils/strings";
+import { LearningMode } from "../types/modes";
+import ModeTabs from "./ModeTabs";
 
 type Message = {
   id: string;
@@ -15,10 +17,12 @@ function generateMessageId(): string {
 
 type Props = {
   language: string;
+  mode: LearningMode;
   onBack: () => void;
+  onModeChange: (mode: LearningMode) => void;
 };
 
-export default function ChatView({ language, onBack }: Props) {
+export default function ChatView({ language, mode, onBack, onModeChange }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -63,6 +67,7 @@ export default function ChatView({ language, onBack }: Props) {
       const response = await invoke<string>("send_message", {
         message: userMessage,
         language,
+        mode,
       });
       setMessages((prev) => [...prev, { id: generateMessageId(), role: "assistant", content: response }]);
     } catch (error) {
@@ -88,8 +93,9 @@ export default function ChatView({ language, onBack }: Props) {
     <div className="container">
       <header>
         <h1>Learning {displayName}</h1>
+        <ModeTabs currentMode={mode} onModeChange={onModeChange} />
         <button className="back-btn" onClick={onBack}>
-          Change Language
+          Change Mode
         </button>
       </header>
 
