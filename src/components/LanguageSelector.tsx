@@ -8,9 +8,10 @@ type Props = {
   existingLanguages: string[];
   onLanguageSelected: (language: string) => void;
   onLanguagesUpdated: () => void;
+  loadError: string | null;
 };
 
-export default function LanguageSelector({ existingLanguages, onLanguageSelected, onLanguagesUpdated }: Props) {
+export default function LanguageSelector({ existingLanguages, onLanguageSelected, onLanguagesUpdated, loadError }: Props) {
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customLanguage, setCustomLanguage] = useState("");
@@ -55,6 +56,7 @@ export default function LanguageSelector({ existingLanguages, onLanguageSelected
       <h1>Your Second First Language</h1>
       <p>Choose a language to learn:</p>
       {isBootstrapping && <p className="hint">Setting up language...</p>}
+      {loadError && <p className="error">{loadError}</p>}
       {bootstrapError && <p className="error">{bootstrapError}</p>}
       <div className="language-grid">
         {allLanguages.map(({ name, isExisting }) => (
