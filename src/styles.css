@@ -21,6 +21,7 @@
   --spacing-md: 0.75rem;
   --spacing-lg: 1rem;
   --spacing-xl: 1.5rem;
+  --spacing-2xl: 2rem;
 
   /* Border radius */
   --radius-sm: 4px;
@@ -201,7 +202,7 @@ header {
 .hint {
   color: var(--color-text-muted);
   text-align: center;
-  margin-top: 2rem;
+  margin-top: var(--spacing-2xl);
 }
 
 .error {
