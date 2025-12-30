@@ -8,6 +8,12 @@ type Message = {
   content: string;
 };
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Unknown error";
+}
+
 let messageIdCounter = 0;
 function generateMessageId(): string {
   return `msg-${Date.now()}-${++messageIdCounter}`;
@@ -65,7 +71,7 @@ export default function ChatView({ language, onBack }: Props) {
     } catch (error) {
       setMessages((prev) => [
         ...prev,
-        { id: generateMessageId(), role: "assistant", content: `Error: ${error}` },
+        { id: generateMessageId(), role: "assistant", content: `Error: ${getErrorMessage(error)}` },
       ]);
     } finally {
       setIsLoading(false);
