@@ -210,6 +210,18 @@ fn get_data_dir() -> Result<PathBuf, String> {
     Ok(get_exe_dir()?.join("data"))
 }
 
+fn get_language_dir(language: &str) -> Result<PathBuf, String> {
+    Ok(get_data_dir()?.join(language.to_lowercase()))
+}
+
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 /// Derives the Claude CLI project path from a directory.
 /// E.g., C:\Users\wongp\Desktop\lang\data\korean -> ~/.claude/projects/C--Users-wongp-Desktop-lang-data-korean
 fn get_claude_project_dir(dir: &PathBuf) -> Result<PathBuf, String> {
@@ -241,9 +253,7 @@ fn get_claude_project_dir(dir: &PathBuf) -> Result<PathBuf, String> {
 
 #[tauri::command]
 fn bootstrap_language(language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let lang_lower = language.to_lowercase();
-    let lang_dir = data_dir.join(&lang_lower);
+    let lang_dir = get_language_dir(&language)?;
 
     // Check if already exists
     if lang_dir.exists() {
@@ -325,8 +335,7 @@ IMPORTANT: Check for duplicates by word/rule field. Update existing entries, don
 
 #[tauri::command]
 async fn send_message(message: String, language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let lang_dir = data_dir.join(language.to_lowercase());
+    let lang_dir = get_language_dir(&language)?;
 
     if !lang_dir.exists() {
         return Err(format!(
@@ -392,21 +401,13 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
 
 #[tauri::command]
 fn get_vocabulary(language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let vocab_file = data_dir
-        .join(language.to_lowercase())
-        .join("vocabulary.json");
-
+    let vocab_file = get_language_dir(&language)?.join("vocabulary.json");
     fs::read_to_string(&vocab_file).map_err(|e| format!("Failed to read vocabulary: {}", e))
 }
 
 #[tauri::command]
 fn get_grammar(language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let grammar_file = data_dir
-        .join(language.to_lowercase())
-        .join("grammar.json");
-
+    let grammar_file = get_language_dir(&language)?.join("grammar.json");
     fs::read_to_string(&grammar_file).map_err(|e| format!("Failed to read grammar: {}", e))
 }
 
@@ -425,13 +426,7 @@ fn list_languages() -> Result<Vec<String>, String> {
     for entry in entries.flatten() {
         if entry.path().is_dir() {
             if let Some(name) = entry.file_name().to_str() {
-                // Capitalize first letter
-                let capitalized = name
-                    .chars()
-                    .next()
-                    .map(|c| c.to_uppercase().collect::<String>() + &name[1..])
-                    .unwrap_or_else(|| name.to_string());
-                languages.push(capitalized);
+                languages.push(capitalize_first(name));
             }
         }
     }
@@ -441,8 +436,7 @@ fn list_languages() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn delete_language(language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let lang_dir = data_dir.join(language.to_lowercase());
+    let lang_dir = get_language_dir(&language)?;
 
     if !lang_dir.exists() {
         return Err(format!("Language '{}' does not exist", language));
@@ -455,8 +449,7 @@ fn delete_language(language: String) -> Result<String, String> {
 
 #[tauri::command]
 fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
-    let data_dir = get_data_dir()?;
-    let lang_dir = data_dir.join(language.to_lowercase());
+    let lang_dir = get_language_dir(&language)?;
 
     if !lang_dir.exists() {
         return Err(format!("Language '{}' not set up", language));
