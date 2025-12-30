@@ -469,6 +469,30 @@ fn spawn_tracker_agent(lang_dir: PathBuf, message: String) {
     });
 }
 
+fn get_mode_prefix(mode: &str) -> &'static str {
+    match mode {
+        "think-out-loud" => concat!(
+            "[LEARNING MODE: Think-Out-Loud]\n",
+            "In this mode, encourage the learner to verbalize their thought process:\n",
+            "- Ask them to explain WHY they chose certain words\n",
+            "- Prompt 'What do you want to express?' questions in the target language\n",
+            "- When they attempt something, acknowledge the thinking process\n",
+            "- Mirror their reasoning: 'So you wanted to say X...'\n",
+            "- Celebrate the process of working through language choices\n\n"
+        ),
+        "story" => concat!(
+            "[LEARNING MODE: Story]\n",
+            "Build a collaborative story together:\n",
+            "- Continue the story based on their contribution\n",
+            "- Use narrative structures and past tense when appropriate\n",
+            "- Ask 'What happens next?' in the target language\n",
+            "- Introduce vocabulary through story context\n",
+            "- Keep story elements simple but engaging\n\n"
+        ),
+        _ => "", // "chat" is default, no prefix needed
+    }
+}
+
 async fn run_responder_agent(lang_dir: &Path, message: &str) -> Result<String, String> {
     let dir = lang_dir.to_path_buf();
     let msg = message.to_string();
@@ -503,7 +527,7 @@ async fn run_responder_agent(lang_dir: &Path, message: &str) -> Result<String, S
 const MAX_MESSAGE_LENGTH: usize = 10000;
 
 #[tauri::command]
-async fn send_message(message: String, language: String) -> Result<String, String> {
+async fn send_message(message: String, language: String, mode: String) -> Result<String, String> {
     if message.trim().is_empty() {
         return Err("Message cannot be empty".to_string());
     }
@@ -524,8 +548,13 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
         ));
     }
 
+    // Tracker gets raw message (for vocabulary/grammar updates)
     spawn_tracker_agent(lang_dir.clone(), message.clone());
-    run_responder_agent(&lang_dir, &message).await
+
+    // Responder gets mode-prefixed message
+    let mode_prefix = get_mode_prefix(&mode);
+    let enhanced_message = format!("{}{}", mode_prefix, message);
+    run_responder_agent(&lang_dir, &enhanced_message).await
 }
 
 #[tauri::command]
