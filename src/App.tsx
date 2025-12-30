@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ReactMarkdown from "react-markdown";
 
 type Message = {
   role: "user" | "assistant";
@@ -18,10 +19,17 @@ function App() {
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customLanguage, setCustomLanguage] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     loadExistingLanguages();
   }, []);
+
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [messages, isLoading, isLoadingHistory]);
 
   async function loadExistingLanguages() {
     try {
@@ -172,7 +180,7 @@ function App() {
         </button>
       </header>
 
-      <div className="chat-container">
+      <div className="chat-container" ref={chatContainerRef}>
         {isLoadingHistory && (
           <p className="hint">Loading conversation...</p>
         )}
@@ -181,20 +189,25 @@ function App() {
         )}
         {messages.map((msg, i) => (
           <div key={i} className={`message ${msg.role}`}>
-            {msg.content}
+            <ReactMarkdown>{msg.content}</ReactMarkdown>
           </div>
         ))}
         {isLoading && <div className="message assistant loading">...</div>}
       </div>
 
       <div className="input-container">
-        <input
-          type="text"
+        <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-          placeholder="Type a message..."
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              sendMessage();
+            }
+          }}
+          placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
           disabled={isLoading}
+          rows={1}
         />
         <button onClick={sendMessage} disabled={isLoading || !input.trim()}>
           Send
