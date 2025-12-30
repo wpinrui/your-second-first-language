@@ -351,7 +351,9 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
     // Spawn tracker agent (fire and forget - don't wait for it)
     // Uses a subdirectory so it gets a separate Claude project folder
     let tracker_dir = tracker_lang_dir.join(".tracker");
-    let _ = fs::create_dir_all(&tracker_dir);
+    if let Err(e) = fs::create_dir_all(&tracker_dir) {
+        eprintln!("[Tracker] Failed to create tracker directory: {}", e);
+    }
 
     tokio::spawn(async move {
         let prompt = TRACKER_PROMPT.replace("{{MESSAGE}}", &tracker_message);
@@ -484,7 +486,10 @@ fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
         b_time.cmp(&a_time)
     });
 
-    let latest_file = &jsonl_files[0].path();
+    let latest_file = jsonl_files
+        .first()
+        .ok_or("No JSONL files found")?
+        .path();
     let file = File::open(latest_file).map_err(|e| format!("Failed to open JSONL: {}", e))?;
     let reader = BufReader::new(file);
 
