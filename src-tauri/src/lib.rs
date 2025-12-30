@@ -210,7 +210,21 @@ fn get_data_dir() -> Result<PathBuf, String> {
     Ok(get_exe_dir()?.join("data"))
 }
 
+fn validate_language_name(language: &str) -> Result<(), String> {
+    if language.is_empty() {
+        return Err("Language name cannot be empty".to_string());
+    }
+    if language.contains("..") || language.contains('/') || language.contains('\\') {
+        return Err("Language name contains invalid characters".to_string());
+    }
+    if !language.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-') {
+        return Err("Language name can only contain letters, numbers, spaces, and hyphens".to_string());
+    }
+    Ok(())
+}
+
 fn get_language_dir(language: &str) -> Result<PathBuf, String> {
+    validate_language_name(language)?;
     Ok(get_data_dir()?.join(language.to_lowercase()))
 }
 
