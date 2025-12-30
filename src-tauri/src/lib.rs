@@ -404,31 +404,15 @@ SM-2 Algorithm (when learner uses a word correctly):
 
 IMPORTANT: Check for duplicates by word/rule field. Update existing entries, don't create duplicates."#;
 
-#[tauri::command]
-async fn send_message(message: String, language: String) -> Result<String, String> {
-    let lang_dir = get_language_dir(&language)?;
-
-    if !lang_dir.exists() {
-        return Err(format!(
-            "Language '{}' not set up. Please bootstrap it first.",
-            language
-        ));
-    }
-
-    // Clone for tracker agent
-    let tracker_lang_dir = lang_dir.clone();
-    let tracker_message = message.clone();
-
-    // Spawn tracker agent (fire and forget - don't wait for it)
-    // Uses a subdirectory so it gets a separate Claude project folder
+fn spawn_tracker_agent(lang_dir: PathBuf, message: String) {
     tokio::spawn(async move {
-        let tracker_dir = tracker_lang_dir.join(".tracker");
+        let tracker_dir = lang_dir.join(".tracker");
         if let Err(e) = fs::create_dir_all(&tracker_dir) {
             eprintln!("[Tracker] Failed to create tracker directory: {}", e);
             return;
         }
 
-        let prompt = TRACKER_PROMPT.replace("{{MESSAGE}}", &tracker_message);
+        let prompt = TRACKER_PROMPT.replace("{{MESSAGE}}", &message);
         let task = tokio::task::spawn_blocking(move || {
             let mut cmd = Command::new("claude");
             cmd.arg("--dangerously-skip-permissions")
@@ -448,15 +432,19 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
             Ok(Ok(Ok(_))) => {}
         }
     });
+}
 
-    // Run responder agent (wait for response)
+async fn run_responder_agent(lang_dir: &Path, message: &str) -> Result<String, String> {
+    let dir = lang_dir.to_path_buf();
+    let msg = message.to_string();
+
     let result = tokio::task::spawn_blocking(move || {
         let mut cmd = Command::new("claude");
         cmd.arg("--dangerously-skip-permissions")
-            .arg("--continue") // Continue conversation for context
+            .arg("--continue")
             .arg("-p")
-            .arg(&message)
-            .current_dir(&lang_dir);
+            .arg(&msg)
+            .current_dir(&dir);
 
         hide_console_window(&mut cmd);
         cmd.output()
@@ -468,8 +456,26 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
     if result.status.success() {
         Ok(String::from_utf8_lossy(&result.stdout).trim().to_string())
     } else {
-        Err(format!("Claude error: {}", String::from_utf8_lossy(&result.stderr).trim()))
+        Err(format!(
+            "Claude error: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ))
     }
+}
+
+#[tauri::command]
+async fn send_message(message: String, language: String) -> Result<String, String> {
+    let lang_dir = get_language_dir(&language)?;
+
+    if !lang_dir.exists() {
+        return Err(format!(
+            "Language '{}' not set up. Please bootstrap it first.",
+            language
+        ));
+    }
+
+    spawn_tracker_agent(lang_dir.clone(), message.clone());
+    run_responder_agent(&lang_dir, &message).await
 }
 
 #[tauri::command]
