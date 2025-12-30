@@ -4686,6 +4686,7 @@ name = "your-second-first-language"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "dirs",
  "serde",
  "serde_json",
  "tauri",

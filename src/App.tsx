@@ -17,6 +17,7 @@ function App() {
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customLanguage, setCustomLanguage] = useState("");
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   useEffect(() => {
     loadExistingLanguages();
@@ -28,6 +29,19 @@ function App() {
       setExistingLanguages(languages);
     } catch (error) {
       console.error("Failed to load languages:", error);
+    }
+  }
+
+  async function loadChatHistory(lang: string) {
+    setIsLoadingHistory(true);
+    try {
+      const history = await invoke<Message[]>("get_chat_history", { language: lang });
+      setMessages(history);
+    } catch (error) {
+      console.error("Failed to load chat history:", error);
+      setMessages([]);
+    } finally {
+      setIsLoadingHistory(false);
     }
   }
 
@@ -51,9 +65,11 @@ function App() {
     }
 
     setLanguage(langLower);
-    setMessages([]);
     setShowCustomInput(false);
     setCustomLanguage("");
+
+    // Load previous conversation
+    await loadChatHistory(langLower);
   }
 
   async function sendMessage() {
@@ -157,7 +173,10 @@ function App() {
       </header>
 
       <div className="chat-container">
-        {messages.length === 0 && (
+        {isLoadingHistory && (
+          <p className="hint">Loading conversation...</p>
+        )}
+        {!isLoadingHistory && messages.length === 0 && (
           <p className="hint">Say hello to start learning!</p>
         )}
         {messages.map((msg, i) => (

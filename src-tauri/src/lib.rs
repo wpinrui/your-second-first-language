@@ -1,10 +1,12 @@
 use std::env;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::Command;
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 // ============================================================================
 // Embedded Templates
@@ -24,16 +26,12 @@ const GRAMMAR_TEMPLATE: &str = r#"{
 
 const USER_OVERRIDES_TEMPLATE: &str = r#"{
   "language": "{{LANGUAGE_NAME}}",
-  "difficulty": {
-    "level": "auto",
-    "notes": ""
-  },
+  "mode": "learning",
   "preferences": {
     "new_vocab_per_exchange": 2,
-    "new_grammar_threshold": 0.8,
     "show_romanization": true
   },
-  "adjustments": []
+  "notes": ""
 }"#;
 
 // ============================================================================
@@ -118,6 +116,12 @@ struct LanguageConfig {
     started: String,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct ChatMessage {
+    role: String,  // "user" or "assistant"
+    content: String,
+}
+
 // ============================================================================
 // Path helpers
 // ============================================================================
@@ -132,6 +136,31 @@ fn get_exe_dir() -> Result<PathBuf, String> {
 
 fn get_data_dir() -> Result<PathBuf, String> {
     Ok(get_exe_dir()?.join("data"))
+}
+
+/// Derives the Claude CLI project path from a directory.
+/// E.g., C:\Users\wongp\Desktop\lang\data\korean -> ~/.claude/projects/C--Users-wongp-Desktop-lang-data-korean
+fn get_claude_project_dir(dir: &PathBuf) -> Result<PathBuf, String> {
+    let canonical = dir
+        .canonicalize()
+        .map_err(|e| format!("Failed to canonicalize path: {}", e))?;
+
+    let mut path_str = canonical.to_string_lossy().to_string();
+
+    // Remove Windows extended path prefix \\?\ BEFORE any replacements
+    if path_str.starts_with(r"\\?\") {
+        path_str = path_str[4..].to_string();
+    }
+
+    // Convert path to Claude's project folder format:
+    // C:\Users\foo\bar -> C--Users-foo-bar
+    let encoded = path_str
+        .replace(":\\", "--")  // C:\ -> C--
+        .replace("\\", "-")    // remaining backslashes
+        .replace("/", "-");    // forward slashes (just in case)
+
+    let home = dirs::home_dir().ok_or("Failed to get home directory")?;
+    Ok(home.join(".claude").join("projects").join(encoded))
 }
 
 // ============================================================================
@@ -196,6 +225,32 @@ fn bootstrap_language(language: String) -> Result<String, String> {
     Ok(format!("Successfully bootstrapped {}", language))
 }
 
+const TRACKER_PROMPT: &str = r#"[TRACKER TASK - UPDATE FILES ONLY, NO RESPONSE]
+
+Process this learner message and update vocabulary.json and grammar.json.
+
+Learner said: {{MESSAGE}}
+
+Instructions:
+1. Read vocabulary.json and grammar.json
+2. For each word/particle the learner used:
+   - If NEW: add entry with ease=2.5, interval=1, repetitions=1
+   - If EXISTS: update SM-2 data (see below)
+3. For grammar patterns used:
+   - If NEW: add entry with stars=1, correct_streak=1
+   - If EXISTS: increment correct_streak, upgrade stars if appropriate
+4. Write updated files
+5. Output NOTHING - your only job is updating files
+
+SM-2 Algorithm (when learner uses a word correctly):
+- repetitions += 1
+- if repetitions == 1: interval = 1
+- if repetitions == 2: interval = 6
+- if repetitions >= 3: interval = round(interval × ease)
+- next_review = today + interval days
+
+IMPORTANT: Check for duplicates by word/rule field. Update existing entries, don't create duplicates."#;
+
 #[tauri::command]
 async fn send_message(message: String, language: String) -> Result<String, String> {
     let data_dir = get_data_dir()?;
@@ -208,16 +263,45 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
         ));
     }
 
-    // Run in blocking task to not freeze UI
+    // Clone for tracker agent
+    let tracker_lang_dir = lang_dir.clone();
+    let tracker_message = message.clone();
+
+    // Spawn tracker agent (fire and forget - don't wait for it)
+    // Uses a subdirectory so it gets a separate Claude project folder
+    let tracker_dir = tracker_lang_dir.join(".tracker");
+    let _ = fs::create_dir_all(&tracker_dir);
+
+    tokio::spawn(async move {
+        let prompt = TRACKER_PROMPT.replace("{{MESSAGE}}", &tracker_message);
+        let _ = tokio::task::spawn_blocking(move || {
+            let mut cmd = Command::new("claude");
+            cmd.arg("--dangerously-skip-permissions")
+                .arg("-p")
+                .arg(&prompt)
+                .current_dir(&tracker_dir);
+
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+
+            cmd.output()
+        })
+        .await;
+    });
+
+    // Run responder agent (wait for response)
     let result = tokio::task::spawn_blocking(move || {
         let mut cmd = Command::new("claude");
-        cmd.arg("--dangerously-skip-permissions") // Bypass permission prompts
-            .arg("--continue") // Continue most recent conversation in this directory
+        cmd.arg("--dangerously-skip-permissions")
+            .arg("--continue") // Continue conversation for context
             .arg("-p")
             .arg(&message)
             .current_dir(&lang_dir);
 
-        // Hide console window on Windows
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -303,6 +387,134 @@ fn delete_language(language: String) -> Result<String, String> {
     Ok(format!("Deleted {}", language))
 }
 
+#[tauri::command]
+fn debug_paths(language: String) -> Result<String, String> {
+    let data_dir = get_data_dir()?;
+    let lang_dir = data_dir.join(language.to_lowercase());
+    let claude_project_dir = get_claude_project_dir(&lang_dir)?;
+
+    Ok(format!(
+        "data_dir: {:?}\nlang_dir: {:?}\nlang_dir exists: {}\nclaude_project_dir: {:?}\nclaude_project_dir exists: {}",
+        data_dir,
+        lang_dir,
+        lang_dir.exists(),
+        claude_project_dir,
+        claude_project_dir.exists()
+    ))
+}
+
+#[tauri::command]
+fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
+    let data_dir = get_data_dir()?;
+    let lang_dir = data_dir.join(language.to_lowercase());
+
+    if !lang_dir.exists() {
+        return Err(format!("Language '{}' not set up", language));
+    }
+
+    let claude_project_dir = get_claude_project_dir(&lang_dir)?;
+
+    if !claude_project_dir.exists() {
+        // No conversation history yet - return debug info in a fake message
+        return Ok(vec![ChatMessage {
+            role: "assistant".to_string(),
+            content: format!("[DEBUG] No history found. Looking in: {:?}", claude_project_dir),
+        }]);
+    }
+
+    // Find the most recent .jsonl file
+    let mut jsonl_files: Vec<_> = fs::read_dir(&claude_project_dir)
+        .map_err(|e| format!("Failed to read Claude project dir: {}", e))?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "jsonl")
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if jsonl_files.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Sort by modification time, most recent first
+    jsonl_files.sort_by(|a, b| {
+        let a_time = a.metadata().and_then(|m| m.modified()).ok();
+        let b_time = b.metadata().and_then(|m| m.modified()).ok();
+        b_time.cmp(&a_time)
+    });
+
+    let latest_file = &jsonl_files[0].path();
+    let file = File::open(latest_file).map_err(|e| format!("Failed to open JSONL: {}", e))?;
+    let reader = BufReader::new(file);
+
+    let mut messages = Vec::new();
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+
+        let json: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Extract user messages
+        if json.get("type").and_then(|v| v.as_str()) == Some("user") {
+            if let Some(msg) = json.get("message") {
+                if msg.get("role").and_then(|v| v.as_str()) == Some("user") {
+                    if let Some(content) = msg.get("content") {
+                        // Content can be a string or array
+                        let text = if let Some(s) = content.as_str() {
+                            s.to_string()
+                        } else if let Some(arr) = content.as_array() {
+                            // Skip tool results
+                            if arr.iter().any(|item| {
+                                item.get("type").and_then(|v| v.as_str()) == Some("tool_result")
+                            }) {
+                                continue;
+                            }
+                            continue;
+                        } else {
+                            continue;
+                        };
+
+                        messages.push(ChatMessage {
+                            role: "user".to_string(),
+                            content: text,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Extract assistant text responses
+        if json.get("type").and_then(|v| v.as_str()) == Some("assistant") {
+            if let Some(msg) = json.get("message") {
+                if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                    if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
+                        for item in content {
+                            if item.get("type").and_then(|v| v.as_str()) == Some("text") {
+                                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                                    messages.push(ChatMessage {
+                                        role: "assistant".to_string(),
+                                        content: text.to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(messages)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -313,7 +525,9 @@ pub fn run() {
             get_vocabulary,
             get_grammar,
             list_languages,
-            delete_language
+            delete_language,
+            get_chat_history,
+            debug_paths
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
