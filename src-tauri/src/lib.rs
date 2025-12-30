@@ -3,6 +3,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -102,6 +103,59 @@ fn get_language_config(language: &str) -> (&'static str, &'static str) {
         "german" => ("Deutsch", "none"),
         _ => ("Native Script", "none"),
     }
+}
+
+// ============================================================================
+// File system helpers
+// ============================================================================
+
+fn find_latest_jsonl_file(dir: &PathBuf) -> Option<PathBuf> {
+    let mut jsonl_files: Vec<_> = fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+        .collect();
+
+    if jsonl_files.is_empty() {
+        return None;
+    }
+
+    jsonl_files.sort_by(|a, b| {
+        let a_time = a.metadata().and_then(|m| m.modified()).ok();
+        let b_time = b.metadata().and_then(|m| m.modified()).ok();
+        b_time.cmp(&a_time)
+    });
+
+    jsonl_files.first().map(|e| e.path())
+}
+
+fn parse_chat_messages_from_jsonl(path: &PathBuf) -> Result<Vec<ChatMessage>, String> {
+    let file = File::open(path).map_err(|e| format!("Failed to open JSONL: {}", e))?;
+    let reader = BufReader::new(file);
+    let mut messages = Vec::new();
+
+    for line in reader.lines().flatten() {
+        let json: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        if let Some(text) = extract_user_message(&json) {
+            messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: text,
+            });
+        }
+
+        if let Some(text) = extract_assistant_message(&json) {
+            messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: text,
+            });
+        }
+    }
+
+    Ok(messages)
 }
 
 // ============================================================================
@@ -370,8 +424,9 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
     }
 
     tokio::spawn(async move {
+        const TRACKER_TIMEOUT: Duration = Duration::from_secs(60);
         let prompt = TRACKER_PROMPT.replace("{{MESSAGE}}", &tracker_message);
-        let result = tokio::task::spawn_blocking(move || {
+        let task = tokio::task::spawn_blocking(move || {
             let mut cmd = Command::new("claude");
             cmd.arg("--dangerously-skip-permissions")
                 .arg("-p")
@@ -380,13 +435,13 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
 
             hide_console_window(&mut cmd);
             cmd.output()
-        })
-        .await;
+        });
 
-        if let Err(e) = result {
-            eprintln!("[Tracker] Task join error: {}", e);
-        } else if let Ok(Err(e)) = result {
-            eprintln!("[Tracker] Command error: {}", e);
+        match tokio::time::timeout(TRACKER_TIMEOUT, task).await {
+            Err(_) => eprintln!("[Tracker] Timed out after {:?}", TRACKER_TIMEOUT),
+            Ok(Err(e)) => eprintln!("[Tracker] Task join error: {}", e),
+            Ok(Ok(Err(e))) => eprintln!("[Tracker] Command error: {}", e),
+            Ok(Ok(Ok(_))) => {}
         }
     });
 
@@ -475,60 +530,10 @@ fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
         return Ok(vec![]);
     }
 
-    // Find the most recent .jsonl file
-    let mut jsonl_files: Vec<_> = fs::read_dir(&claude_project_dir)
-        .map_err(|e| format!("Failed to read Claude project dir: {}", e))?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "jsonl")
-                .unwrap_or(false)
-        })
-        .collect();
-
-    if jsonl_files.is_empty() {
-        return Ok(vec![]);
+    match find_latest_jsonl_file(&claude_project_dir) {
+        Some(path) => parse_chat_messages_from_jsonl(&path),
+        None => Ok(vec![]),
     }
-
-    // Sort by modification time, most recent first
-    jsonl_files.sort_by(|a, b| {
-        let a_time = a.metadata().and_then(|m| m.modified()).ok();
-        let b_time = b.metadata().and_then(|m| m.modified()).ok();
-        b_time.cmp(&a_time)
-    });
-
-    let latest_file = jsonl_files
-        .first()
-        .ok_or("No JSONL files found")?
-        .path();
-    let file = File::open(latest_file).map_err(|e| format!("Failed to open JSONL: {}", e))?;
-    let reader = BufReader::new(file);
-
-    let mut messages = Vec::new();
-
-    for line in reader.lines().flatten() {
-        let json: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        if let Some(text) = extract_user_message(&json) {
-            messages.push(ChatMessage {
-                role: "user".to_string(),
-                content: text,
-            });
-        }
-
-        if let Some(text) = extract_assistant_message(&json) {
-            messages.push(ChatMessage {
-                role: "assistant".to_string(),
-                content: text,
-            });
-        }
-    }
-
-    Ok(messages)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
