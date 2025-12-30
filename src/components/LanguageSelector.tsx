@@ -3,6 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 
 const PRESET_LANGUAGES = ["Chinese", "Korean", "Japanese", "Spanish", "French", "German"];
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Unknown error";
+}
+
 function isLanguageInList(language: string, list: string[]): boolean {
   const normalized = language.toLowerCase();
   return list.some(l => l.toLowerCase() === normalized);
@@ -24,7 +30,7 @@ export default function LanguageSelector({ existingLanguages, onLanguageSelected
     if (!lang.trim()) return;
 
     const langLower = lang.toLowerCase();
-    const exists = isLanguageInList(lang, existingLanguages);
+    const exists = isLanguageInList(langLower, existingLanguages);
 
     if (!exists) {
       setIsBootstrapping(true);
@@ -33,7 +39,7 @@ export default function LanguageSelector({ existingLanguages, onLanguageSelected
         await invoke("bootstrap_language", { language: lang });
         onLanguagesUpdated();
       } catch (error) {
-        setBootstrapError(`Failed to set up ${lang}: ${error}`);
+        setBootstrapError(`Failed to set up ${lang}: ${getErrorMessage(error)}`);
         setIsBootstrapping(false);
         return;
       }
