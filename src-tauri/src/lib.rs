@@ -165,17 +165,19 @@ fn parse_chat_messages_from_jsonl(path: &Path) -> Result<Vec<ChatMessage>, Strin
 // JSON message extraction helpers
 // ============================================================================
 
-fn extract_user_message(json: &Value) -> Option<String> {
-    if json.get("type")?.as_str()? != "user" {
+fn get_message_content<'a>(json: &'a Value, role: &str) -> Option<&'a Value> {
+    if json.get("type")?.as_str()? != role {
         return None;
     }
-
     let msg = json.get("message")?;
-    if msg.get("role")?.as_str()? != "user" {
+    if msg.get("role")?.as_str()? != role {
         return None;
     }
+    msg.get("content")
+}
 
-    let content = msg.get("content")?;
+fn extract_user_message(json: &Value) -> Option<String> {
+    let content = get_message_content(json, "user")?;
 
     if let Some(s) = content.as_str() {
         return Some(s.to_string());
@@ -194,16 +196,7 @@ fn extract_user_message(json: &Value) -> Option<String> {
 }
 
 fn extract_assistant_message(json: &Value) -> Option<String> {
-    if json.get("type")?.as_str()? != "assistant" {
-        return None;
-    }
-
-    let msg = json.get("message")?;
-    if msg.get("role")?.as_str()? != "assistant" {
-        return None;
-    }
-
-    let content = msg.get("content")?.as_array()?;
+    let content = get_message_content(json, "assistant")?.as_array()?;
 
     for item in content {
         if item.get("type")?.as_str()? == "text" {
