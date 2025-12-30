@@ -58,8 +58,6 @@ body {
 }
 
 .container {
-  max-width: 800px;
-  margin: 0 auto;
   padding: var(--spacing-lg);
   height: 100vh;
   display: flex;
@@ -84,6 +82,7 @@ header {
 .back-btn {
   padding: var(--spacing-sm) var(--spacing-lg);
   background: var(--color-bg-secondary);
+  color: var(--color-text);
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -335,6 +334,8 @@ header {
   max-height: 8rem;
   overflow-y: auto;
   field-sizing: content;
+  background-color: var(--color-bg);
+  color: var(--color-text);
 }
 
 .input-container textarea:focus {
