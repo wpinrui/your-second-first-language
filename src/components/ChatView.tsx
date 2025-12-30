@@ -23,6 +23,7 @@ export default function ChatView({ language, onBack }: Props) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,11 +38,13 @@ export default function ChatView({ language, onBack }: Props) {
 
   async function loadChatHistory() {
     setIsLoadingHistory(true);
+    setHistoryError(null);
     try {
       const history = await invoke<Omit<Message, "id">[]>("get_chat_history", { language });
       setMessages(history.map(msg => ({ ...msg, id: generateMessageId() })));
     } catch (error) {
       console.error("Failed to load chat history:", error);
+      setHistoryError(getErrorMessage(error));
       setMessages([]);
     } finally {
       setIsLoadingHistory(false);
@@ -94,7 +97,10 @@ export default function ChatView({ language, onBack }: Props) {
         {isLoadingHistory && (
           <p className="hint">Loading conversation...</p>
         )}
-        {!isLoadingHistory && messages.length === 0 && (
+        {historyError && (
+          <p className="hint error">Failed to load history: {historyError}</p>
+        )}
+        {!isLoadingHistory && !historyError && messages.length === 0 && (
           <p className="hint">Say hello to start learning!</p>
         )}
         {messages.map((msg) => (
