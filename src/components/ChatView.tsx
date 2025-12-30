@@ -74,6 +74,13 @@ export default function ChatView({ language, onBack }: Props) {
 
   const displayName = capitalize(language);
 
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+
   return (
     <div className="container">
       <header>
@@ -102,12 +109,7 @@ export default function ChatView({ language, onBack }: Props) {
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              sendMessage();
-            }
-          }}
+          onKeyDown={handleKeyDown}
           placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
           disabled={isLoading}
           rows={1}

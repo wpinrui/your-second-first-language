@@ -1,7 +1,7 @@
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -34,6 +34,9 @@ const USER_OVERRIDES_TEMPLATE: &str = r#"{
   },
   "notes": ""
 }"#;
+
+/// Timeout for the background tracker agent
+const TRACKER_TIMEOUT_SECS: u64 = 60;
 
 // ============================================================================
 // Language-specific notes
@@ -109,7 +112,7 @@ fn get_language_config(language: &str) -> (&'static str, &'static str) {
 // File system helpers
 // ============================================================================
 
-fn find_latest_jsonl_file(dir: &PathBuf) -> Option<PathBuf> {
+fn find_latest_jsonl_file(dir: &Path) -> Option<PathBuf> {
     let mut jsonl_files: Vec<_> = fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
@@ -129,7 +132,7 @@ fn find_latest_jsonl_file(dir: &PathBuf) -> Option<PathBuf> {
     jsonl_files.first().map(|e| e.path())
 }
 
-fn parse_chat_messages_from_jsonl(path: &PathBuf) -> Result<Vec<ChatMessage>, String> {
+fn parse_chat_messages_from_jsonl(path: &Path) -> Result<Vec<ChatMessage>, String> {
     let file = File::open(path).map_err(|e| format!("Failed to open JSONL: {}", e))?;
     let reader = BufReader::new(file);
     let mut messages = Vec::new();
@@ -292,7 +295,7 @@ fn capitalize_first(s: &str) -> String {
 
 /// Derives the Claude CLI project path from a directory.
 /// E.g., C:\Users\wongp\Desktop\lang\data\korean -> ~/.claude/projects/C--Users-wongp-Desktop-lang-data-korean
-fn get_claude_project_dir(dir: &PathBuf) -> Result<PathBuf, String> {
+fn get_claude_project_dir(dir: &Path) -> Result<PathBuf, String> {
     let canonical = dir
         .canonicalize()
         .map_err(|e| format!("Failed to canonicalize path: {}", e))?;
@@ -418,13 +421,13 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
 
     // Spawn tracker agent (fire and forget - don't wait for it)
     // Uses a subdirectory so it gets a separate Claude project folder
-    let tracker_dir = tracker_lang_dir.join(".tracker");
-    if let Err(e) = fs::create_dir_all(&tracker_dir) {
-        eprintln!("[Tracker] Failed to create tracker directory: {}", e);
-    }
-
     tokio::spawn(async move {
-        const TRACKER_TIMEOUT: Duration = Duration::from_secs(60);
+        let tracker_dir = tracker_lang_dir.join(".tracker");
+        if let Err(e) = fs::create_dir_all(&tracker_dir) {
+            eprintln!("[Tracker] Failed to create tracker directory: {}", e);
+            return;
+        }
+
         let prompt = TRACKER_PROMPT.replace("{{MESSAGE}}", &tracker_message);
         let task = tokio::task::spawn_blocking(move || {
             let mut cmd = Command::new("claude");
@@ -437,8 +440,9 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
             cmd.output()
         });
 
-        match tokio::time::timeout(TRACKER_TIMEOUT, task).await {
-            Err(_) => eprintln!("[Tracker] Timed out after {:?}", TRACKER_TIMEOUT),
+        let timeout = Duration::from_secs(TRACKER_TIMEOUT_SECS);
+        match tokio::time::timeout(timeout, task).await {
+            Err(_) => eprintln!("[Tracker] Timed out after {}s", TRACKER_TIMEOUT_SECS),
             Ok(Err(e)) => eprintln!("[Tracker] Task join error: {}", e),
             Ok(Ok(Err(e))) => eprintln!("[Tracker] Command error: {}", e),
             Ok(Ok(Ok(_))) => {}
