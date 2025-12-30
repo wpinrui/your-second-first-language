@@ -9,6 +9,11 @@ type Message = {
 
 const PRESET_LANGUAGES = ["Chinese", "Korean", "Japanese", "Spanish", "French", "German"];
 
+function isLanguageInList(language: string, list: string[]): boolean {
+  const normalized = language.toLowerCase();
+  return list.some(l => l.toLowerCase() === normalized);
+}
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -57,7 +62,7 @@ function App() {
     if (!lang.trim()) return;
 
     const langLower = lang.toLowerCase();
-    const exists = existingLanguages.map(l => l.toLowerCase()).includes(langLower);
+    const exists = isLanguageInList(lang, existingLanguages);
 
     if (!exists) {
       setIsBootstrapping(true);
@@ -107,7 +112,7 @@ function App() {
   if (!language) {
     // Combine preset languages with any existing custom ones
     const customExisting = existingLanguages.filter(
-      lang => !PRESET_LANGUAGES.map(p => p.toLowerCase()).includes(lang.toLowerCase())
+      lang => !isLanguageInList(lang, PRESET_LANGUAGES)
     );
 
     return (
@@ -117,7 +122,7 @@ function App() {
         {isBootstrapping && <p className="hint">Setting up language...</p>}
         <div className="language-grid">
           {PRESET_LANGUAGES.map((lang) => {
-            const isExisting = existingLanguages.map(l => l.toLowerCase()).includes(lang.toLowerCase());
+            const isExisting = isLanguageInList(lang, existingLanguages);
             return (
               <button
                 key={lang}
