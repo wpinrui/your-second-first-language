@@ -346,7 +346,7 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
 
     tokio::spawn(async move {
         let prompt = TRACKER_PROMPT.replace("{{MESSAGE}}", &tracker_message);
-        let _ = tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             let mut cmd = Command::new("claude");
             cmd.arg("--dangerously-skip-permissions")
                 .arg("-p")
@@ -357,6 +357,12 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
             cmd.output()
         })
         .await;
+
+        if let Err(e) = result {
+            eprintln!("[Tracker] Task join error: {}", e);
+        } else if let Ok(Err(e)) = result {
+            eprintln!("[Tracker] Command error: {}", e);
+        }
     });
 
     // Run responder agent (wait for response)
@@ -448,22 +454,6 @@ fn delete_language(language: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn debug_paths(language: String) -> Result<String, String> {
-    let data_dir = get_data_dir()?;
-    let lang_dir = data_dir.join(language.to_lowercase());
-    let claude_project_dir = get_claude_project_dir(&lang_dir)?;
-
-    Ok(format!(
-        "data_dir: {:?}\nlang_dir: {:?}\nlang_dir exists: {}\nclaude_project_dir: {:?}\nclaude_project_dir exists: {}",
-        data_dir,
-        lang_dir,
-        lang_dir.exists(),
-        claude_project_dir,
-        claude_project_dir.exists()
-    ))
-}
-
-#[tauri::command]
 fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
     let data_dir = get_data_dir()?;
     let lang_dir = data_dir.join(language.to_lowercase());
@@ -475,11 +465,7 @@ fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
     let claude_project_dir = get_claude_project_dir(&lang_dir)?;
 
     if !claude_project_dir.exists() {
-        // No conversation history yet - return debug info in a fake message
-        return Ok(vec![ChatMessage {
-            role: "assistant".to_string(),
-            content: format!("[DEBUG] No history found. Looking in: {:?}", claude_project_dir),
-        }]);
+        return Ok(vec![]);
     }
 
     // Find the most recent .jsonl file
@@ -546,9 +532,11 @@ pub fn run() {
             get_grammar,
             list_languages,
             delete_language,
-            get_chat_history,
-            debug_paths
+            get_chat_history
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to start application: {}", e);
+            std::process::exit(1);
+        });
 }

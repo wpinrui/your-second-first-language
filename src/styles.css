@@ -201,6 +201,15 @@ header {
   margin-top: 2rem;
 }
 
+.error {
+  color: #dc3545;
+  text-align: center;
+  margin-top: var(--spacing-lg);
+  padding: var(--spacing-md);
+  background: rgba(220, 53, 69, 0.1);
+  border-radius: var(--radius-md);
+}
+
 .message {
   padding: var(--spacing-md) var(--spacing-lg);
   border-radius: var(--radius-lg);

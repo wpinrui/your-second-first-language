@@ -24,6 +24,7 @@ function App() {
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customLanguage, setCustomLanguage] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -66,11 +67,12 @@ function App() {
 
     if (!exists) {
       setIsBootstrapping(true);
+      setBootstrapError(null);
       try {
         await invoke("bootstrap_language", { language: lang });
         await loadExistingLanguages();
       } catch (error) {
-        alert(`Failed to set up ${lang}: ${error}`);
+        setBootstrapError(`Failed to set up ${lang}: ${error}`);
         setIsBootstrapping(false);
         return;
       }
@@ -120,6 +122,7 @@ function App() {
         <h1>Your Second First Language</h1>
         <p>Choose a language to learn:</p>
         {isBootstrapping && <p className="hint">Setting up language...</p>}
+        {bootstrapError && <p className="error">{bootstrapError}</p>}
         <div className="language-grid">
           {PRESET_LANGUAGES.map((lang) => {
             const isExisting = isLanguageInList(lang, existingLanguages);
