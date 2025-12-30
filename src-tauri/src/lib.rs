@@ -319,6 +319,46 @@ fn get_claude_project_dir(dir: &Path) -> Result<PathBuf, String> {
 }
 
 // ============================================================================
+// Bootstrap helpers
+// ============================================================================
+
+fn write_language_file(dir: &Path, filename: &str, content: &str) -> Result<(), String> {
+    fs::write(dir.join(filename), content)
+        .map_err(|e| format!("Failed to write {}: {}", filename, e))
+}
+
+fn generate_language_files(lang_dir: &Path, language: &str) -> Result<(), String> {
+    let (native_script, romanization) = get_language_config(language);
+    let language_notes = get_language_notes(language);
+
+    let claude_md = TUTOR_TEMPLATE
+        .replace("{{LANGUAGE_NAME}}", language)
+        .replace("{{LANGUAGE_NATIVE}}", native_script)
+        .replace("{{ROMANIZATION}}", romanization)
+        .replace("{{LANGUAGE_SPECIFIC_NOTES}}", language_notes);
+    write_language_file(lang_dir, "CLAUDE.md", &claude_md)?;
+
+    let vocab = VOCABULARY_TEMPLATE.replace("{{LANGUAGE_NAME}}", language);
+    write_language_file(lang_dir, "vocabulary.json", &vocab)?;
+
+    let grammar = GRAMMAR_TEMPLATE.replace("{{LANGUAGE_NAME}}", language);
+    write_language_file(lang_dir, "grammar.json", &grammar)?;
+
+    let overrides = USER_OVERRIDES_TEMPLATE.replace("{{LANGUAGE_NAME}}", language);
+    write_language_file(lang_dir, "user-overrides.json", &overrides)?;
+
+    let config = LanguageConfig {
+        language: language.to_string(),
+        native_script: native_script.to_string(),
+        romanization: romanization.to_string(),
+        started: Local::now().format("%Y-%m-%d").to_string(),
+    };
+    let config_json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    write_language_file(lang_dir, "config.json", &config_json)
+}
+
+// ============================================================================
 // Commands
 // ============================================================================
 
@@ -326,54 +366,14 @@ fn get_claude_project_dir(dir: &Path) -> Result<PathBuf, String> {
 fn bootstrap_language(language: String) -> Result<String, String> {
     let lang_dir = get_language_dir(&language)?;
 
-    // Check if already exists
     if lang_dir.exists() {
         return Err(format!("Language '{}' already exists", language));
     }
 
-    // Create directory
     fs::create_dir_all(&lang_dir)
         .map_err(|e| format!("Failed to create language directory: {}", e))?;
 
-    // Get language-specific config
-    let (native_script, romanization) = get_language_config(&language);
-    let language_notes = get_language_notes(&language);
-
-    // Generate CLAUDE.md
-    let claude_md = TUTOR_TEMPLATE
-        .replace("{{LANGUAGE_NAME}}", &language)
-        .replace("{{LANGUAGE_NATIVE}}", native_script)
-        .replace("{{ROMANIZATION}}", romanization)
-        .replace("{{LANGUAGE_SPECIFIC_NOTES}}", language_notes);
-    fs::write(lang_dir.join("CLAUDE.md"), claude_md)
-        .map_err(|e| format!("Failed to write CLAUDE.md: {}", e))?;
-
-    // Generate vocabulary.json
-    let vocab = VOCABULARY_TEMPLATE.replace("{{LANGUAGE_NAME}}", &language);
-    fs::write(lang_dir.join("vocabulary.json"), vocab)
-        .map_err(|e| format!("Failed to write vocabulary.json: {}", e))?;
-
-    // Generate grammar.json
-    let grammar = GRAMMAR_TEMPLATE.replace("{{LANGUAGE_NAME}}", &language);
-    fs::write(lang_dir.join("grammar.json"), grammar)
-        .map_err(|e| format!("Failed to write grammar.json: {}", e))?;
-
-    // Generate user-overrides.json
-    let overrides = USER_OVERRIDES_TEMPLATE.replace("{{LANGUAGE_NAME}}", &language);
-    fs::write(lang_dir.join("user-overrides.json"), overrides)
-        .map_err(|e| format!("Failed to write user-overrides.json: {}", e))?;
-
-    // Generate config.json
-    let config = LanguageConfig {
-        language: language.clone(),
-        native_script: native_script.to_string(),
-        romanization: romanization.to_string(),
-        started: Local::now().format("%Y-%m-%d").to_string(),
-    };
-    let config_json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    fs::write(lang_dir.join("config.json"), config_json)
-        .map_err(|e| format!("Failed to write config.json: {}", e))?;
+    generate_language_files(&lang_dir, &language)?;
 
     Ok(format!("Successfully bootstrapped {}", language))
 }
