@@ -407,11 +407,9 @@ async fn send_message(message: String, language: String) -> Result<String, Strin
     .map_err(|e| format!("Failed to run claude: {}", e))?;
 
     if result.status.success() {
-        let response = String::from_utf8_lossy(&result.stdout).to_string();
-        Ok(response.trim().to_string())
+        Ok(String::from_utf8_lossy(&result.stdout).trim().to_string())
     } else {
-        let error = String::from_utf8_lossy(&result.stderr).to_string();
-        Err(format!("Claude error: {}", error))
+        Err(format!("Claude error: {}", String::from_utf8_lossy(&result.stderr).trim()))
     }
 }
 
