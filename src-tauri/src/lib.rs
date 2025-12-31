@@ -516,12 +516,13 @@ fn get_mode_prefix(mode: &str) -> &'static str {
     match mode {
         "think-out-loud" => concat!(
             "[LEARNING MODE: Think-Out-Loud]\n",
-            "In this mode, encourage the learner to verbalize their thought process:\n",
-            "- Ask them to explain WHY they chose certain words\n",
-            "- Prompt 'What do you want to express?' questions in the target language\n",
-            "- When they attempt something, acknowledge the thinking process\n",
-            "- Mirror their reasoning: 'So you wanted to say X...'\n",
-            "- Celebrate the process of working through language choices\n\n"
+            "In this mode, the learner narrates their thoughts. Your ONLY job is to echo back corrections:\n",
+            "- When they say something, respond ONLY with the corrected version\n",
+            "- NO explanations, NO vocabulary notes, NO grammar lessons\n",
+            "- NO questions, NO emojis, NO praise\n",
+            "- Just model correct usage by echoing their sentence correctly\n",
+            "- If their sentence is already correct, acknowledge briefly (한 마디: 좋아요) then stay quiet\n",
+            "- Be minimal and silent - let them think through language on their own\n\n"
         ),
         "story" => concat!(
             "[LEARNING MODE: Story]\n",

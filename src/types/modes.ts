@@ -12,7 +12,7 @@ export const LEARNING_MODES: ModeInfo[] = [
   {
     id: "think-out-loud",
     name: "Think Out Loud",
-    description: "Narrate your thoughts. Tutor echoes corrections.",
+    description: "Narrate your thoughts. Tutor silently corrects.",
     icon: "💭",
   },
   {

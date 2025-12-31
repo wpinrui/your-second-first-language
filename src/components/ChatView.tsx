@@ -15,6 +15,17 @@ function generateMessageId(): string {
   return crypto.randomUUID();
 }
 
+/** Strip mode prefix from user messages loaded from history */
+function stripModePrefix(content: string): string {
+  if (content.startsWith("[LEARNING MODE:")) {
+    const prefixEnd = content.indexOf("\n\n");
+    if (prefixEnd !== -1) {
+      return content.slice(prefixEnd + 2);
+    }
+  }
+  return content;
+}
+
 type Props = {
   language: string;
   mode: LearningMode;
@@ -111,7 +122,9 @@ export default function ChatView({ language, mode, onBack, onModeChange }: Props
         )}
         {messages.map((msg) => (
           <div key={msg.id} className={`message ${msg.role}`}>
-            <ReactMarkdown>{msg.content}</ReactMarkdown>
+            <ReactMarkdown>
+              {msg.role === "user" ? stripModePrefix(msg.content) : msg.content}
+            </ReactMarkdown>
           </div>
         ))}
         {isLoading && <div className="message assistant loading">...</div>}
