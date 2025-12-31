@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -269,6 +270,13 @@ struct ChatMessage {
     content: String,
 }
 
+/// Maps learning modes to their Claude session IDs.
+/// Stored in ~/.claude/projects/<path>/mode-sessions.json
+#[derive(Serialize, Deserialize, Default)]
+struct ModeSessions {
+    sessions: HashMap<String, String>,  // mode -> session_id (jsonl filename without extension)
+}
+
 // ============================================================================
 // Platform helpers
 // ============================================================================
@@ -394,6 +402,41 @@ fn generate_language_files(lang_dir: &Path, language: &str) -> Result<(), String
 }
 
 // ============================================================================
+// Mode session helpers
+// ============================================================================
+
+const MODE_SESSIONS_FILE: &str = "mode-sessions.json";
+
+fn read_mode_sessions(claude_project_dir: &Path) -> ModeSessions {
+    let path = claude_project_dir.join(MODE_SESSIONS_FILE);
+    if !path.exists() {
+        return ModeSessions::default();
+    }
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default()
+}
+
+fn write_mode_sessions(claude_project_dir: &Path, sessions: &ModeSessions) -> Result<(), String> {
+    let path = claude_project_dir.join(MODE_SESSIONS_FILE);
+    let content = serde_json::to_string_pretty(sessions)
+        .map_err(|e| format!("Failed to serialize mode sessions: {}", e))?;
+    fs::write(&path, content)
+        .map_err(|e| format!("Failed to write mode sessions: {}", e))
+}
+
+fn find_jsonl_by_session_id(claude_project_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let filename = format!("{}.jsonl", session_id);
+    let path = claude_project_dir.join(&filename);
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+// ============================================================================
 // Commands
 // ============================================================================
 
@@ -493,17 +536,25 @@ fn get_mode_prefix(mode: &str) -> &'static str {
     }
 }
 
-async fn run_responder_agent(lang_dir: &Path, message: &str) -> Result<String, String> {
+async fn run_responder_agent(
+    lang_dir: &Path,
+    message: &str,
+    session_id: Option<&str>,
+) -> Result<String, String> {
     let dir = lang_dir.to_path_buf();
     let msg = message.to_string();
+    let session = session_id.map(|s| s.to_string());
 
     let result = tokio::task::spawn_blocking(move || {
         let mut cmd = Command::new("claude");
-        cmd.arg("--dangerously-skip-permissions")
-            .arg("--continue")
-            .arg("-p")
-            .arg(&msg)
-            .current_dir(&dir);
+        cmd.arg("--dangerously-skip-permissions");
+
+        // Use --resume if we have a session ID, otherwise start fresh (no --continue)
+        if let Some(ref sid) = session {
+            cmd.arg("--resume").arg(sid);
+        }
+
+        cmd.arg("-p").arg(&msg).current_dir(&dir);
 
         hide_console_window(&mut cmd);
         cmd.output()
@@ -551,10 +602,31 @@ async fn send_message(message: String, language: String, mode: String) -> Result
     // Tracker gets raw message (for vocabulary/grammar updates)
     spawn_tracker_agent(lang_dir.clone(), message.clone());
 
+    // Get Claude project directory and read mode sessions
+    let claude_project_dir = get_claude_project_dir(&lang_dir)?;
+    let mut mode_sessions = read_mode_sessions(&claude_project_dir);
+    let session_id = mode_sessions.sessions.get(&mode).cloned();
+
     // Responder gets mode-prefixed message
     let mode_prefix = get_mode_prefix(&mode);
     let enhanced_message = format!("{}{}", mode_prefix, message);
-    run_responder_agent(&lang_dir, &enhanced_message).await
+    let response = run_responder_agent(&lang_dir, &enhanced_message, session_id.as_deref()).await?;
+
+    // After successful response, find the latest jsonl and update mode sessions
+    if let Some(latest_jsonl) = find_latest_jsonl_file(&claude_project_dir) {
+        if let Some(stem) = latest_jsonl.file_stem().and_then(|s| s.to_str()) {
+            let new_session_id = stem.to_string();
+            // Only update if different (new session was created)
+            if session_id.as_deref() != Some(&new_session_id) {
+                mode_sessions.sessions.insert(mode, new_session_id);
+                if let Err(e) = write_mode_sessions(&claude_project_dir, &mode_sessions) {
+                    eprintln!("[Mode sessions] Failed to save: {}", e);
+                }
+            }
+        }
+    }
+
+    Ok(response)
 }
 
 #[tauri::command]
@@ -613,7 +685,7 @@ fn delete_language(language: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
+fn get_chat_history(language: String, mode: String) -> Result<Vec<ChatMessage>, String> {
     let lang_dir = get_language_dir(&language)?;
 
     if !lang_dir.exists() {
@@ -626,9 +698,16 @@ fn get_chat_history(language: String) -> Result<Vec<ChatMessage>, String> {
         return Ok(vec![]);
     }
 
-    match find_latest_jsonl_file(&claude_project_dir) {
+    // Look up session ID for this mode
+    let mode_sessions = read_mode_sessions(&claude_project_dir);
+    let jsonl_path = mode_sessions
+        .sessions
+        .get(&mode)
+        .and_then(|session_id| find_jsonl_by_session_id(&claude_project_dir, session_id));
+
+    match jsonl_path {
         Some(path) => parse_chat_messages_from_jsonl(&path),
-        None => Ok(vec![]),
+        None => Ok(vec![]),  // No session for this mode yet
     }
 }
 

@@ -32,7 +32,7 @@ export default function ChatView({ language, mode, onBack, onModeChange }: Props
 
   useEffect(() => {
     loadChatHistory();
-  }, [language]);
+  }, [language, mode]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -44,7 +44,7 @@ export default function ChatView({ language, mode, onBack, onModeChange }: Props
     setIsLoadingHistory(true);
     setHistoryError(null);
     try {
-      const history = await invoke<Omit<Message, "id">[]>("get_chat_history", { language });
+      const history = await invoke<Omit<Message, "id">[]>("get_chat_history", { language, mode });
       setMessages(history.map(msg => ({ ...msg, id: generateMessageId() })));
     } catch (error) {
       console.error("Failed to load chat history:", error);
