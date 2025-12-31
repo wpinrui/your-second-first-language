@@ -519,8 +519,9 @@ fn get_mode_prefix(mode: &str) -> String {
     let instructions = match mode {
         "think-out-loud" => concat!(
             "[Think-Out-Loud Mode] ",
-            "Echo corrections only. NO explanations, NO vocab notes, NO questions, NO emojis, NO praise. ",
-            "Just restate their sentence correctly. If correct, say 좋아요 and nothing else."
+            "Echo corrections only. NO unsolicited explanations, NO vocab notes, NO questions, NO emojis, NO praise. ",
+            "Just restate their sentence correctly. If correct, say 좋아요 and nothing else. ",
+            "EXCEPTION: If they ask a direct question (뭐예요? 무슨 뜻이에요? etc), answer it briefly."
         ),
         "story" => concat!(
             "[Story Mode] ",
