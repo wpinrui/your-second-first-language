@@ -15,13 +15,13 @@ function generateMessageId(): string {
   return crypto.randomUUID();
 }
 
-/** Strip mode prefix from user messages loaded from history */
+/** Strip mode prefix from user messages. Looks for <<<MSG>>> delimiter. */
+const MODE_PREFIX_DELIMITER = "<<<MSG>>>";
+
 function stripModePrefix(content: string): string {
-  if (content.startsWith("[LEARNING MODE:")) {
-    const prefixEnd = content.indexOf("\n\n");
-    if (prefixEnd !== -1) {
-      return content.slice(prefixEnd + 2);
-    }
+  const delimiterIndex = content.indexOf(MODE_PREFIX_DELIMITER);
+  if (delimiterIndex !== -1) {
+    return content.slice(delimiterIndex + MODE_PREFIX_DELIMITER.length).trimStart();
   }
   return content;
 }

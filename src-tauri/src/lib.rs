@@ -512,29 +512,24 @@ fn spawn_tracker_agent(lang_dir: PathBuf, message: String) {
     });
 }
 
-fn get_mode_prefix(mode: &str) -> &'static str {
-    match mode {
+/// Delimiter marking end of mode instructions. Must match frontend's stripModePrefix().
+const MODE_PREFIX_END: &str = "<<<MSG>>>";
+
+fn get_mode_prefix(mode: &str) -> String {
+    let instructions = match mode {
         "think-out-loud" => concat!(
-            "[LEARNING MODE: Think-Out-Loud]\n",
-            "In this mode, the learner narrates their thoughts. Your ONLY job is to echo back corrections:\n",
-            "- When they say something, respond ONLY with the corrected version\n",
-            "- NO explanations, NO vocabulary notes, NO grammar lessons\n",
-            "- NO questions, NO emojis, NO praise\n",
-            "- Just model correct usage by echoing their sentence correctly\n",
-            "- If their sentence is already correct, acknowledge briefly (한 마디: 좋아요) then stay quiet\n",
-            "- Be minimal and silent - let them think through language on their own\n\n"
+            "[Think-Out-Loud Mode] ",
+            "Echo corrections only. NO explanations, NO vocab notes, NO questions, NO emojis, NO praise. ",
+            "Just restate their sentence correctly. If correct, say 좋아요 and nothing else."
         ),
         "story" => concat!(
-            "[LEARNING MODE: Story]\n",
-            "Build a collaborative story together:\n",
-            "- Continue the story based on their contribution\n",
-            "- Use narrative structures and past tense when appropriate\n",
-            "- Ask 'What happens next?' in the target language\n",
-            "- Introduce vocabulary through story context\n",
-            "- Keep story elements simple but engaging\n\n"
+            "[Story Mode] ",
+            "Build a collaborative story. Continue based on their contribution. ",
+            "Use past tense for narrative. Ask 'what happens next?' in target language."
         ),
-        _ => "", // "chat" is default, no prefix needed
-    }
+        _ => return String::new(), // "chat" is default, no prefix
+    };
+    format!("{} {}", instructions, MODE_PREFIX_END)
 }
 
 async fn run_responder_agent(
