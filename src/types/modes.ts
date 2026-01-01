@@ -24,7 +24,7 @@ export const LEARNING_MODES: ModeInfo[] = [
   {
     id: "story",
     name: "Story",
-    description: "Build stories together.",
+    description: "Request stories for reading practice.",
     icon: "📖",
   },
   {

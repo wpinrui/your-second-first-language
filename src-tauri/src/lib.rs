@@ -436,6 +436,19 @@ fn find_jsonl_by_session_id(claude_project_dir: &Path, session_id: &str) -> Opti
     }
 }
 
+/// Check if a string is a valid UUID format (required by claude --resume)
+fn is_valid_uuid(s: &str) -> bool {
+    // UUID format: 8-4-4-4-12 hex chars (e.g., 550e8400-e29b-41d4-a716-446655440000)
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 5 {
+        return false;
+    }
+    let expected_lengths = [8, 4, 4, 4, 12];
+    parts.iter().zip(expected_lengths.iter()).all(|(part, &len)| {
+        part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit())
+    })
+}
+
 // ============================================================================
 // Commands
 // ============================================================================
@@ -463,15 +476,18 @@ Process this learner message and update vocabulary.json and grammar.json.
 Learner said: {{MESSAGE}}
 
 Instructions:
-1. Read vocabulary.json and grammar.json
-2. For each word/particle the learner used:
+1. Read config.json to determine the target language
+2. Read vocabulary.json and grammar.json
+3. For each TARGET LANGUAGE word the learner used (IGNORE all English words):
    - If NEW: add entry with ease=2.5, interval=1, repetitions=1
    - If EXISTS: update SM-2 data (see below)
-3. For grammar patterns used:
+4. For grammar patterns used:
    - If NEW: add entry with stars=1, correct_streak=1
    - If EXISTS: increment correct_streak, upgrade stars if appropriate
-4. Write updated files
-5. Output NOTHING - your only job is updating files
+5. Write updated files
+6. Output NOTHING - your only job is updating files
+
+CRITICAL: Only extract words in the target language script (Hangul for Korean, Kana/Kanji for Japanese, Hanzi for Chinese, etc). NEVER add English words.
 
 SM-2 Algorithm (when learner uses a word correctly):
 - repetitions += 1
@@ -525,8 +541,9 @@ fn get_mode_prefix(mode: &str) -> String {
         ),
         "story" => concat!(
             "[Story Mode] ",
-            "Build a collaborative story. Continue based on their contribution. ",
-            "Use past tense for narrative. Ask 'what happens next?' in target language."
+            "Write a short story on the topic they request. Use vocabulary from vocabulary.json. ",
+            "Ask 2-3 comprehension questions about the story. Stay on-topic - this is reading practice, not conversation. ",
+            "When done, ask if they want a new story. If they go off-topic, redirect to the story."
         ),
         _ => return String::new(), // "chat" is default, no prefix
     };
@@ -546,9 +563,12 @@ async fn run_responder_agent(
         let mut cmd = Command::new("claude");
         cmd.arg("--dangerously-skip-permissions");
 
-        // Use --resume if we have a session ID, otherwise start fresh (no --continue)
+        // Use --resume only if we have a valid UUID session ID
+        // Claude CLI requires UUID format for --resume flag
         if let Some(ref sid) = session {
-            cmd.arg("--resume").arg(sid);
+            if is_valid_uuid(sid) {
+                cmd.arg("--resume").arg(sid);
+            }
         }
 
         cmd.arg("-p").arg(&msg).current_dir(&dir);
@@ -610,14 +630,17 @@ async fn send_message(message: String, language: String, mode: String) -> Result
     let response = run_responder_agent(&lang_dir, &enhanced_message, session_id.as_deref()).await?;
 
     // After successful response, find the latest jsonl and update mode sessions
+    // Only store UUIDs since --resume requires UUID format
     if let Some(latest_jsonl) = find_latest_jsonl_file(&claude_project_dir) {
         if let Some(stem) = latest_jsonl.file_stem().and_then(|s| s.to_str()) {
-            let new_session_id = stem.to_string();
-            // Only update if different (new session was created)
-            if session_id.as_deref() != Some(&new_session_id) {
-                mode_sessions.sessions.insert(mode, new_session_id);
-                if let Err(e) = write_mode_sessions(&claude_project_dir, &mode_sessions) {
-                    eprintln!("[Mode sessions] Failed to save: {}", e);
+            if is_valid_uuid(stem) {
+                let new_session_id = stem.to_string();
+                // Only update if different (new session was created)
+                if session_id.as_deref() != Some(&new_session_id) {
+                    mode_sessions.sessions.insert(mode, new_session_id);
+                    if let Err(e) = write_mode_sessions(&claude_project_dir, &mode_sessions) {
+                        eprintln!("[Mode sessions] Failed to save: {}", e);
+                    }
                 }
             }
         }
