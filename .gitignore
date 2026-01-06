@@ -3,7 +3,8 @@ node_modules/
 
 # Build outputs
 dist/
-src-tauri/target/
+out/
+.vite/
 
 # Runtime data (generated per-user)
 data/
