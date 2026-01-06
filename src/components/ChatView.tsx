@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import { getErrorMessage, capitalize } from "../utils/strings";
 import { LearningMode } from "../types/modes";
@@ -55,7 +54,7 @@ export default function ChatView({ language, mode, onBack, onModeChange }: Props
     setIsLoadingHistory(true);
     setHistoryError(null);
     try {
-      const history = await invoke<Omit<Message, "id">[]>("get_chat_history", { language, mode });
+      const history = await window.electronAPI.getChatHistory(language, mode);
       setMessages(history.map(msg => ({ ...msg, id: generateMessageId() })));
     } catch (error) {
       console.error("Failed to load chat history:", error);
@@ -75,11 +74,7 @@ export default function ChatView({ language, mode, onBack, onModeChange }: Props
     setIsLoading(true);
 
     try {
-      const response = await invoke<string>("send_message", {
-        message: userMessage,
-        language,
-        mode,
-      });
+      const response = await window.electronAPI.sendMessage(userMessage, language, mode);
       setMessages((prev) => [...prev, { id: generateMessageId(), role: "assistant", content: response }]);
     } catch (error) {
       setMessages((prev) => [

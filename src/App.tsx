@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import LanguageSelector from "./components/LanguageSelector";
 import ModeSelector from "./components/ModeSelector";
 import ChatView from "./components/ChatView";
@@ -21,7 +20,7 @@ function App() {
   async function loadExistingLanguages() {
     setLoadError(null);
     try {
-      const languages = await invoke<string[]>("list_languages");
+      const languages = await window.electronAPI.listLanguages();
       setExistingLanguages(languages);
     } catch (error) {
       console.error("Failed to load languages:", error);

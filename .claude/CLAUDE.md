@@ -6,7 +6,7 @@
 A language learning app that leverages Claude's conversational ability to provide immersive language practice. The app tracks learner progress through vocabulary and grammar JSON files using Anki-style spaced repetition.
 
 ## Tech Stack
-- **Framework**: Tauri 2.x (Rust backend + WebView frontend)
+- **Framework**: Electron + Electron Forge (Node.js backend + Chromium frontend)
 - **Frontend**: React + TypeScript + Vite
 - **AI**: Claude CLI (spawned by the app)
 - **Data**: JSON files for vocabulary, grammar, and preferences
@@ -15,21 +15,31 @@ A language learning app that leverages Claude's conversational ability to provid
 ```
 your-second-first-language/
 ├── src/                        # React frontend
-├── src-tauri/                  # Rust backend
-├── templates/                  # Templates for language bootstrapping
-│   ├── tutor-instructions.md   # CLAUDE.md template for language tutor
-│   ├── vocabulary-schema.json
-│   ├── grammar-schema.json
-│   └── user-overrides-schema.json
-├── scripts/
-│   └── bootstrap-language.sh   # Self-contained language bootstrapper
+├── electron/                   # Electron main process (TypeScript)
+│   ├── main.ts                # Entry point, BrowserWindow
+│   ├── preload.ts             # IPC bridge (contextBridge)
+│   ├── ipc/                   # IPC handlers
+│   │   ├── index.ts           # Register all handlers
+│   │   ├── language.ts        # bootstrap, list, delete
+│   │   ├── chat.ts            # sendMessage, getChatHistory
+│   │   └── data.ts            # getVocabulary, getGrammar
+│   └── services/              # Business logic
+│       ├── fileService.ts     # Path handling, validation
+│       ├── languageService.ts # Bootstrap, templates
+│       ├── claudeService.ts   # CLI spawning, mode prefixes
+│       └── sessionService.ts  # Session/JSONL management
+├── templates/                  # Templates for reference (embedded in code)
+├── forge.config.ts            # Electron Forge config
+├── vite.main.config.ts        # Vite config for main process
+├── vite.preload.config.ts     # Vite config for preload
+├── vite.renderer.config.ts    # Vite config for React frontend
 ├── .claude/
-│   └── CLAUDE.md               # THIS FILE - dev agent instructions
-└── agents/                     # Git workflow commands
-    ├── g.md                    # Git cleanup
-    ├── f.md                    # Feature development
-    ├── m.md                    # Documentation
-    └── r.md                    # Refactor
+│   └── CLAUDE.md              # THIS FILE - dev agent instructions
+└── agents/                    # Git workflow commands
+    ├── g.md                   # Git cleanup
+    ├── f.md                   # Feature development
+    ├── m.md                   # Documentation
+    └── r.md                   # Refactor
 ```
 
 ### Runtime Data (generated, not in repo)
@@ -44,37 +54,56 @@ data/
     └── config.json             # Language settings
 ```
 
+## Development Commands
+```bash
+npm start      # Run in development mode
+npm run package # Package the app
+npm run make    # Create distributable
+```
+
 ## Path Format Rules
 **CRITICAL:**
-- **Read/Write/Edit tools**: Windows paths: `c:\Users\wongp\Documents\projects\your-second-first-language\...`
-- **Bash commands**: Unix paths: `/c/Users/wongp/Documents/projects/your-second-first-language/...`
+- **Read/Write/Edit tools**: Windows paths: `c:\Users\...\your-second-first-language\...`
+- **Bash commands**: Unix paths: `/c/Users/.../your-second-first-language/...`
 
 ## Architecture: How Modes Work
 
 The app has 4 learning modes: **think-out-loud**, **chat**, **story**, **review**
 
-**Mode handling is split between Rust and the template:**
+**Mode handling is split between the main process and the template:**
 
-1. **Rust backend** (`src-tauri/src/lib.rs`):
-   - `send_message(message, language, mode)` receives the mode from frontend
-   - `get_mode_prefix(mode)` adds mode-specific instructions as a prefix to the message
-   - `think-out-loud` and `story` have hardcoded prefixes in Rust
+1. **Electron main process** (`electron/services/claudeService.ts`):
+   - `sendMessage(message, language, mode)` receives the mode from frontend
+   - `getModePrefix(mode)` adds mode-specific instructions as a prefix to the message
+   - `think-out-loud` and `story` have hardcoded prefixes
    - `chat` has NO prefix - relies entirely on tutor-instructions.md
 
-2. **Template** (`templates/tutor-instructions.md`):
+2. **Template** (`electron/services/languageService.ts` - embedded):
    - Defines `learning/practicing/fluent` difficulty levels (stored in user-overrides.json → mode)
    - This is the difficulty level WITHIN chat mode, not the mode selector
    - Template uses `{{LANGUAGE_NAME}}` and other placeholders - it's language-agnostic
 
-3. **File generation** (`lib.rs` lines 374-402):
-   - `generate_language_files()` uses embedded templates (not files from templates/)
-   - `USER_OVERRIDES_TEMPLATE` is hardcoded in lib.rs (line 29-37), NOT read from templates/user-overrides-schema.json
-   - So updating the schema file does NOT update what gets generated
+3. **File generation** (`languageService.ts`):
+   - `bootstrapLanguage()` uses embedded templates as string constants
+   - Templates are defined at the top of the file
 
 **Key insight:** To change tutor behavior:
-- For chat mode: update `templates/tutor-instructions.md`
-- For think-out-loud/story: update `get_mode_prefix()` in lib.rs
-- For user-overrides defaults: update `USER_OVERRIDES_TEMPLATE` constant in lib.rs
+- For chat mode: update `TUTOR_TEMPLATE` in `electron/services/languageService.ts`
+- For think-out-loud/story: update `getModePrefix()` in `electron/services/claudeService.ts`
+- For user-overrides defaults: update `USER_OVERRIDES_TEMPLATE` in `languageService.ts`
+
+## IPC Communication
+
+Frontend uses `window.electronAPI.*` methods exposed via preload script:
+- `bootstrapLanguage(language)` - Create new language
+- `listLanguages()` - Get all languages
+- `deleteLanguage(language)` - Remove language
+- `sendMessage(message, language, mode)` - Send chat message
+- `getChatHistory(language, mode)` - Load conversation
+- `getVocabulary(language)` - Get vocabulary JSON
+- `getGrammar(language)` - Get grammar JSON
+
+Types are declared in `src/electron.d.ts`.
 
 ## Development Principles
 - Follow Clean Code and Uncle Bob principles

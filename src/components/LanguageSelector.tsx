@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { getErrorMessage, isLanguageInList, normalizeLanguage } from "../utils/strings";
 
 const PRESET_LANGUAGES = ["Chinese", "Korean", "Japanese", "Spanish", "French", "German"];
@@ -27,7 +26,7 @@ export default function LanguageSelector({ existingLanguages, onLanguageSelected
       setIsBootstrapping(true);
       setBootstrapError(null);
       try {
-        await invoke("bootstrap_language", { language: lang });
+        await window.electronAPI.bootstrapLanguage(lang);
         onLanguagesUpdated();
       } catch (error) {
         setBootstrapError(`Failed to set up ${lang}: ${getErrorMessage(error)}`);
