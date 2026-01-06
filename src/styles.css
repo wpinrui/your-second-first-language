@@ -364,6 +364,119 @@ header {
   cursor: not-allowed;
 }
 
+/* Mode Selector */
+.mode-prompt {
+  color: var(--color-text-muted);
+  margin-bottom: var(--spacing-sm);
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-lg);
+  margin-top: var(--spacing-lg);
+}
+
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--spacing-xl);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.mode-card:hover:not(:disabled) {
+  background: var(--color-primary-hover-bg);
+  border-color: var(--color-primary);
+}
+
+.mode-card--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mode-card__icon {
+  font-size: 2rem;
+  margin-bottom: var(--spacing-sm);
+}
+
+.mode-card__name {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  margin-bottom: var(--spacing-xs);
+}
+
+.mode-card__description {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.mode-card__badge {
+  position: absolute;
+  top: var(--spacing-sm);
+  right: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  background: var(--color-text-muted);
+  color: var(--color-bg);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+}
+
+/* Mode Tabs */
+.mode-tabs {
+  display: flex;
+  gap: var(--spacing-xs);
+  background: var(--color-bg-secondary);
+  padding: var(--spacing-xs);
+  border-radius: var(--radius-md);
+}
+
+.mode-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: var(--font-size-sm);
+}
+
+.mode-tab:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.mode-tab--active {
+  background: var(--color-bg);
+  color: var(--color-primary);
+  font-weight: 500;
+}
+
+.mode-tab__icon {
+  font-size: var(--font-size-base);
+}
+
+.mode-tab__name {
+  display: none;
+}
+
+@media (min-width: 600px) {
+  .mode-tab__name {
+    display: inline;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     /* Colors - Dark mode overrides */

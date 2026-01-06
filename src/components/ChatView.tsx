@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import { getErrorMessage, capitalize } from "../utils/strings";
+import { LearningMode } from "../types/modes";
+import ModeTabs from "./ModeTabs";
 
 type Message = {
   id: string;
@@ -13,12 +14,25 @@ function generateMessageId(): string {
   return crypto.randomUUID();
 }
 
+/** Strip mode prefix from user messages. Looks for <<<MSG>>> delimiter. */
+const MODE_PREFIX_DELIMITER = "<<<MSG>>>";
+
+function stripModePrefix(content: string): string {
+  const delimiterIndex = content.indexOf(MODE_PREFIX_DELIMITER);
+  if (delimiterIndex !== -1) {
+    return content.slice(delimiterIndex + MODE_PREFIX_DELIMITER.length).trimStart();
+  }
+  return content;
+}
+
 type Props = {
   language: string;
+  mode: LearningMode;
   onBack: () => void;
+  onModeChange: (mode: LearningMode) => void;
 };
 
-export default function ChatView({ language, onBack }: Props) {
+export default function ChatView({ language, mode, onBack, onModeChange }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -28,7 +42,7 @@ export default function ChatView({ language, onBack }: Props) {
 
   useEffect(() => {
     loadChatHistory();
-  }, [language]);
+  }, [language, mode]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -40,7 +54,7 @@ export default function ChatView({ language, onBack }: Props) {
     setIsLoadingHistory(true);
     setHistoryError(null);
     try {
-      const history = await invoke<Omit<Message, "id">[]>("get_chat_history", { language });
+      const history = await window.electronAPI.getChatHistory(language, mode);
       setMessages(history.map(msg => ({ ...msg, id: generateMessageId() })));
     } catch (error) {
       console.error("Failed to load chat history:", error);
@@ -60,10 +74,7 @@ export default function ChatView({ language, onBack }: Props) {
     setIsLoading(true);
 
     try {
-      const response = await invoke<string>("send_message", {
-        message: userMessage,
-        language,
-      });
+      const response = await window.electronAPI.sendMessage(userMessage, language, mode);
       setMessages((prev) => [...prev, { id: generateMessageId(), role: "assistant", content: response }]);
     } catch (error) {
       setMessages((prev) => [
@@ -88,8 +99,9 @@ export default function ChatView({ language, onBack }: Props) {
     <div className="container">
       <header>
         <h1>Learning {displayName}</h1>
+        <ModeTabs currentMode={mode} onModeChange={onModeChange} />
         <button className="back-btn" onClick={onBack}>
-          Change Language
+          Change Mode
         </button>
       </header>
 
@@ -105,7 +117,9 @@ export default function ChatView({ language, onBack }: Props) {
         )}
         {messages.map((msg) => (
           <div key={msg.id} className={`message ${msg.role}`}>
-            <ReactMarkdown>{msg.content}</ReactMarkdown>
+            <ReactMarkdown>
+              {msg.role === "user" ? stripModePrefix(msg.content) : msg.content}
+            </ReactMarkdown>
           </div>
         ))}
         {isLoading && <div className="message assistant loading">...</div>}
